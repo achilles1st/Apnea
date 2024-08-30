@@ -6,29 +6,32 @@ import numpy as np
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 import time
+from datetime import datetime
+
 
 app = Flask(__name__)
 
 recording = False
 stream = None
 amplification_factor = 4  # Amplification factor (e.g., 2.0 will double the loudness)
+channels = 1
+sample_rate = 10000
 
 # InfluxDB connection settings
 INFLUXDB_URL = "http://localhost:8086"
-INFLUXDB_TOKEN = "your-influxdb-token"
-INFLUXDB_ORG = "your-org"
-INFLUXDB_BUCKET = "your-bucket"
+INFLUXDB_TOKEN = "QAh44Cz9j9oDZI7qxX5Z7GmHdRYsGkfJ4mDJkYFC3Kmu1us7h7F3ezXvG-g36tfwDclO0C-Uf-510-3P8eabGQ=="
+INFLUXDB_ORG = "TU"
+INFLUXDB_BUCKET = "audio"
 
 # Initialize InfluxDB client
 client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
 write_api = client.write_api(write_options=SYNCHRONOUS)
 
-
 def record_audio():
     global stream, recording, p, frames
 
     p = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paInt16, channels=2, rate=44100, input=True, frames_per_buffer=1024,
+    stream = p.open(format=pyaudio.paInt16, channels=channels, rate=sample_rate, input=True, frames_per_buffer=1024,
                     input_device_index=2)
 
     frames = []
@@ -49,11 +52,12 @@ def record_audio():
     p.terminate()
 
     # Save the audio to a file
-    file_name = "output3.wav"
+    current_timestamp_datetime = datetime.fromtimestamp(datetime.now().timestamp()).strftime('%Y-%m-%d_%H-%M-%S')
+    file_name = f"output_{current_timestamp_datetime}.wav"
     with wave.open(file_name, 'wb') as wf:
-        wf.setnchannels(2)
+        wf.setnchannels(channels)
         wf.setsampwidth(p.get_sample_size(pyaudio.paInt16))
-        wf.setframerate(44100)
+        wf.setframerate(sample_rate)
         wf.writeframes(b''.join(frames))
 
     end_time = time.time()  # Record end time for metadata
@@ -66,7 +70,7 @@ def record_audio():
         .field("sample_rate", 44100) \
         .field("channels", 2) \
         .field("amplification_factor", amplification_factor) \
-        .time(int(start_time * 1e9))  # InfluxDB expects time in nanoseconds
+        .field(int(start_time * 1e9))  # InfluxDB expects time in nanoseconds
     write_api.write(bucket=INFLUXDB_BUCKET, record=point)
 
     frames = []  # Clear frames after saving
