@@ -15,7 +15,7 @@ recording = False
 stream = None
 amplification_factor = 4  # Amplification factor (e.g., 2.0 will double the loudness)
 channels = 1
-sample_rate = 10000
+sample_rate = 44100
 
 # InfluxDB connection settings
 INFLUXDB_URL = "http://localhost:8086"
@@ -26,6 +26,9 @@ INFLUXDB_BUCKET = "audio"
 # Initialize InfluxDB client
 client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
 write_api = client.write_api(write_options=SYNCHRONOUS)
+
+user_name = ""  # Global variable to store the username
+
 
 def record_audio():
     global stream, recording, p, frames
@@ -66,11 +69,11 @@ def record_audio():
     # Save metadata to InfluxDB
     point = Point("audio_metadata") \
         .tag("file_name", file_name) \
+        .tag("user_name", user_name) \
         .field("duration", duration) \
         .field("sample_rate", 44100) \
         .field("channels", 2) \
-        .field("amplification_factor", amplification_factor) \
-        .field(int(start_time * 1e9))  # InfluxDB expects time in nanoseconds
+        .field("start_time", int(start_time * 1e9))  # InfluxDB expects time in nanoseconds
     write_api.write(bucket=INFLUXDB_BUCKET, record=point)
 
     frames = []  # Clear frames after saving
@@ -83,7 +86,8 @@ def index():
 
 @app.route('/start', methods=['POST'])
 def start():
-    global recording
+    global recording, user_name
+    user_name = request.form.get('user_name')  # Get the username from the form
     recording = True
     threading.Thread(target=record_audio).start()
     return render_template('stop.html')
