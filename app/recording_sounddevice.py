@@ -14,12 +14,12 @@ recording = False
 amplification_factor = 2  # Amplification factor (e.g., 2.0 will double the loudness)
 channels = 1
 sample_rate = 44100
-device_index = 1
+device_index = 0
 frames = []  # Global list to store audio frames
 
 # InfluxDB connection settings
 INFLUXDB_URL = "http://localhost:8086"
-INFLUXDB_TOKEN ="Y3iGvFrvVpH6NA-r_q7HYi27s8RCR6Roz6gJMrysfq9DP8OgtZ9MF7goBBIjkDQOiL14x02SeveFKo0mvDKTxQ=="
+INFLUXDB_TOKEN ="SeTNNmg7JXk6t6z2y5vIkL8gurpUglDjGzIgyqIK7vL1z-vciL20JW5DQzxQQbousRdVpIAMRytAIDbjGE6svQ=="
 INFLUXDB_ORG = "TU"
 INFLUXDB_BUCKET = "audio"
 
@@ -32,7 +32,7 @@ user_name = ""  # Global variable to store the username
 def audio_callback(indata, frames_count, time_info, status):
     global frames
     if recording:
-        # Amplify the audio data
+        # Amplify the audio data safely
         amplified_data = np.clip(indata * amplification_factor, -32768, 32767)
         frames.append(amplified_data.astype(np.int16).tobytes())
 
@@ -42,8 +42,8 @@ def record_audio():
     frames = []  # Clear frames list at the start
     start_time = time.time()  # Record start time for metadata
 
-    # Start the stream using sounddevice
-    with sd.InputStream(channels=channels, samplerate=sample_rate, device=device_index, callback=audio_callback):
+    # Start the stream using sounddevice with specified device index
+    with sd.InputStream(device=device_index, channels=channels, samplerate=sample_rate, dtype='int16', callback=audio_callback):
         while recording:
             sd.sleep(100)  # Small delay to prevent high CPU usage
 
