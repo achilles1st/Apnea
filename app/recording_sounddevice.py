@@ -1,12 +1,13 @@
 from flask import Flask, render_template, request
 import sounddevice as sd
 import threading
-import wave
 import numpy as np
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 import time
-from datetime import datetime
+from influxdb_client.domain.write_precision import WritePrecision
+from serial.tools import list_ports
+from pulox_250_realtime import CMS50Dplus
 
 app = Flask(__name__)
 
@@ -14,12 +15,12 @@ recording = False
 amplification_factor = 2  # Amplification factor (e.g., 2.0 will double the loudness)
 channels = 1
 sample_rate = 44100
-device_index = 0
+device_index = 1
 frames = []  # Global list to store audio frames
 
 # InfluxDB connection settings
 INFLUXDB_URL = "http://localhost:8086"
-INFLUXDB_TOKEN ="SeTNNmg7JXk6t6z2y5vIkL8gurpUglDjGzIgyqIK7vL1z-vciL20JW5DQzxQQbousRdVpIAMRytAIDbjGE6svQ=="
+INFLUXDB_TOKEN = "9RdNMHQLhHuujCeLFCJpunRbkOOq7PDN2RoxW55-sl8x3_CBPuaHvLXQxL9QqJfdv7Kod82hnrPJkZi8xVUfjQ=="
 INFLUXDB_ORG = "TU"
 INFLUXDB_BUCKET = "audio"
 
@@ -29,12 +30,27 @@ write_api = client.write_api(write_options=SYNCHRONOUS)
 
 user_name = ""  # Global variable to store the username
 
-def audio_callback(indata, frames_count, time_info, status):
-    global frames
+def audio_callback(indata):
+    global frames, write_api
     if recording:
         # Amplify the audio data safely
         amplified_data = np.clip(indata * amplification_factor, -32768, 32767)
         frames.append(amplified_data.astype(np.int16).tobytes())
+
+        # Current timestamp for each sample (in nanoseconds)
+        current_time = time.time_ns()
+
+        # Prepare points for batch upload
+        audio_points = [
+            Point("audio_samples")
+            .tag("user_name", user_name)
+            .field("amplitude", int(sample[0]))
+            .time(current_time + i, WritePrecision.NS)
+            for i, sample in enumerate(amplified_data)
+        ]
+
+        # Batch write all points at once
+        write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=audio_points)
 
 def record_audio():
     global recording, frames
@@ -47,29 +63,27 @@ def record_audio():
         while recording:
             sd.sleep(100)  # Small delay to prevent high CPU usage
 
-    # Save the audio to a file
-    current_timestamp_datetime = datetime.fromtimestamp(datetime.now().timestamp()).strftime('%Y-%m-%d_%H-%M-%S')
-    file_name = f"output_{current_timestamp_datetime}.wav"
-    with wave.open(file_name, 'wb') as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(2)  # Sample width for int16 is 2 bytes
-        wf.setframerate(sample_rate)
-        wf.writeframes(b''.join(frames))
+    frames = []  # Clear frames after
 
-    end_time = time.time()  # Record end time for metadata
-    duration = end_time - start_time
+def record_oximeter():
+    global recording
+    port = list_ports.comports()[0].device  # Select the first available serial port
+    while recording:
+        oximeter = CMS50Dplus(port)
+        datapoints = oximeter.get_realtime_data()
 
-    # Save metadata to InfluxDB
-    point = Point("audio_metadata") \
-        .tag("file_name", file_name) \
-        .tag("user_name", user_name) \
-        .field("duration", duration) \
-        .field("sample_rate", sample_rate) \
-        .field("channels", channels) \
-        .field("start_time", int(start_time * 1e9))  # InfluxDB expects time in nanoseconds
-    write_api.write(bucket=INFLUXDB_BUCKET, record=point)
+        for datapoint in datapoints:
+            # Prepare points for batch upload
+            points = Point("pulseoxy_samples") \
+                .tag("user_name", user_name) \
+                .field("spO2", int(datapoint.spO2)) \
+                .field("PulseWave", int(datapoint.pulse_waveform)) \
+                .field("PulseRate", int(datapoint.pulse_rate)) \
+                .time(int(datapoint.time.timestamp() * 1e9), WritePrecision.NS)
 
-    frames = []  # Clear frames after saving
+
+            # Batch write all points at once
+            write_api.write(bucket="Pulseoxy", org=INFLUXDB_ORG, record=points)
 
 @app.route('/')
 def index():
@@ -81,6 +95,7 @@ def start():
     user_name = request.form.get('user_name')  # Get the username from the form
     recording = True
     threading.Thread(target=record_audio).start()
+    threading.Thread(target=record_oximeter).start()  # Start oximeter recording
     return render_template('stop.html')
 
 @app.route('/stop', methods=['POST'])
