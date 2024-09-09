@@ -1,0 +1,122 @@
+ .u-section-1 {
+  background-image: url("images/23155641.jpg");
+  background-position: 50% 50%;
+}
+
+.u-section-1 .u-sheet-1 {
+  min-height: 1306px;
+}
+
+.u-section-1 .u-text-1 {
+  font-weight: 700;
+  margin: 26px auto 0;
+}
+
+.u-section-1 .u-image-1 {
+  width: 300px;
+  height: 300px;
+  margin: -41px auto 0;
+}
+
+.u-section-1 .u-btn-1 {
+  --radius: 50px;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.875rem;
+  letter-spacing: 1px;
+  background-image: none;
+  margin: -35px auto 0;
+  padding: 18px 87px;
+}
+
+.u-section-1 .u-icon-1 {
+  width: 53px;
+  height: 53px;
+  color: rgb(215, 90, 74) !important;
+  margin: 41px auto 0;
+  padding: 0;
+}
+
+@media (max-width: 1199px) {
+  .u-section-1 .u-sheet-1 {
+    min-height: 890px;
+  }
+
+  .u-section-1 .u-image-1 {
+    width: 247px;
+    height: 247px;
+    margin-top: -33px;
+  }
+
+  .u-section-1 .u-btn-1 {
+    margin-top: -29px;
+  }
+
+  .u-section-1 .u-icon-1 {
+    margin-top: 36px;
+  }
+}
+
+@media (max-width: 991px) {
+  .u-section-1 .u-image-1 {
+    width: 262px;
+    height: 262px;
+    margin-top: -47px;
+  }
+
+  .u-section-1 .u-btn-1 {
+    margin-top: -45px;
+  }
+
+  .u-section-1 .u-icon-1 {
+    margin-top: 45px;
+  }
+}
+
+@media (max-width: 767px) {
+  .u-section-1 .u-image-1 {
+    margin-top: -559px;
+  }
+
+  .u-section-1 .u-btn-1 {
+    margin-top: 441px;
+  }
+
+  .u-section-1 .u-icon-1 {
+    width: 45px;
+    height: 45px;
+    margin-top: 26px;
+    margin-left: 244px;
+  }
+}
+
+@media (max-width: 575px) {
+   .u-section-1 {
+    background-position: 46.06% 50%;
+  }
+
+  .u-section-1 .u-text-1 {
+    width: auto;
+    margin-left: 25px;
+    margin-right: 25px;
+  }
+
+  .u-section-1 .u-image-1 {
+    width: 186px;
+    height: 186px;
+    margin-top: -32px;
+    margin-left: 65px;
+  }
+
+  .u-section-1 .u-btn-1 {
+    margin-top: -14px;
+    padding: 17px 82px 19px 81px;
+  }
+
+  .u-section-1 .u-icon-1 {
+    width: 34px;
+    height: 34px;
+    margin-top: 21px;
+    margin-left: 153px;
+  }
+}

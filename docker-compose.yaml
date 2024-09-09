@@ -9,10 +9,10 @@ services:
     environment:
       - INFLUXDB_DB=test
       - INFLUXDB_ADMIN_USER=admin
-      - INFLUXDB_ADMIN_PASSWORD=pw
+      - INFLUXDB_ADMIN_PASSWORD=raspberry
     volumes:
       - influxdb_data:/var/lib/influxdb
-    restart: unless-stopped  # This line enables auto-restart
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana:latest
@@ -23,8 +23,23 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     depends_on:
       - influxdb
-    restart: unless-stopped  # This line enables auto-restart
+    volumes:
+      - grafana_data:/var/lib/grafana  # Persist Grafana data
+    restart: unless-stopped
 
+#  flask-app:
+#    build:
+#      context: ./app
+#    container_name: flask-app
+#    ports:
+#      - "5000:5000"
+#    depends_on:
+#      - influxdb
+#    devices:
+#      - "/dev/snd:/dev/snd"  # Map the ALSA sound devices from host to container
+#    privileged: true         # Allow full access to host hardware
+#    restart: unless-stopped
 
 volumes:
-  influxdb_data:
+  influxdb_data: {}
+  grafana_data: {}  # Define the volume for Grafana data

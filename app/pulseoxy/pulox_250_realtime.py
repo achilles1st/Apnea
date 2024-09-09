@@ -1,9 +1,10 @@
+'''
+The classes from below are from  ...
+'''
 import sys
 import datetime
 import csv
-import argparse
 import threading
-from tkinter import messagebox
 import serial
 from dateutil import parser as dateparser
 import numpy as np
@@ -520,7 +521,7 @@ class ThreadedRealtimeData(threading.Thread):
 
         except Exception as e:
             self.root.thread_exception = True
-            messagebox.showerror(parent=self.root, title='Error:', message=e)
+            print(f"Error: {e}")
 
 
 def print_realtime_data(port):
@@ -568,13 +569,6 @@ def dump_realtime_data(port, filename):
     except KeyboardInterrupt:
         pass
 
-
-def valid_datetime(s):
-    try:
-        return dateparser.parse(s)
-    except ValueError:
-        msg = "Not a valid date: '{0}'.".format(s)
-        raise argparse.ArgumentTypeError(msg)
 
 
 if __name__ == "__main__":

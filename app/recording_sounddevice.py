@@ -7,7 +7,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 import time
 from influxdb_client.domain.write_precision import WritePrecision
 from serial.tools import list_ports
-from pulox_250_realtime import CMS50Dplus
+from pulseoxy.pulox_250_realtime import CMS50Dplus
 
 app = Flask(__name__)
 
@@ -87,7 +87,7 @@ def record_oximeter():
 
 @app.route('/')
 def index():
-    return render_template('start.html')
+    return render_template('/Start.html')
 
 @app.route('/start', methods=['POST'])
 def start():
@@ -96,13 +96,13 @@ def start():
     recording = True
     threading.Thread(target=record_audio).start()
     threading.Thread(target=record_oximeter).start()  # Start oximeter recording
-    return render_template('stop.html')
+    return render_template('/Stop.html')
 
 @app.route('/stop', methods=['POST'])
 def stop():
     global recording
     recording = False
-    return render_template('start.html')
+    return render_template('/Start.html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0')
