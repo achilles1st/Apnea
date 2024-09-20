@@ -27,19 +27,70 @@ services:
       - grafana_data:/var/lib/grafana  # Persist Grafana data
     restart: unless-stopped
 
-#  flask-app:
-#    build:
-#      context: ./app
-#    container_name: flask-app
-#    ports:
-#      - "5000:5000"
-#    depends_on:
-#      - influxdb
-#    devices:
-#      - "/dev/snd:/dev/snd"  # Map the ALSA sound devices from host to container
-#    privileged: true         # Allow full access to host hardware
-#    restart: unless-stopped
+  flask-app:
+    build:
+      context: ./app
+    container_name: flask-app
+    ports:
+      - "5000:5000"
+    depends_on:
+      - influxdb
+    devices:
+      - "/dev/snd:/dev/snd"  # Map the ALSA sound devices from host to container
+    privileged: true         # Allow full access to host hardware
+    volumes:
+      - /mnt/recordings:/data/recordings  # Mount the SSD directory to the container
+    restart: unless-stopped
 
 volumes:
   influxdb_data: {}
-  grafana_data: {}  # Define the volume for Grafana data
+  grafana_data: {}
+
+
+
+#  version: '3'
+#
+#  services:
+#    influxdb:
+#      image: influxdb:latest
+#      container_name: influxdb
+#      ports:
+#        - "8086:8086"
+#      environment:
+#        - INFLUXDB_DB=test
+#        - INFLUXDB_ADMIN_USER=admin
+#        - INFLUXDB_ADMIN_PASSWORD=raspberry
+#      volumes:
+#        - influxdb_data:/var/lib/influxdb
+#      restart: unless-stopped
+#
+#    grafana:
+#      image: grafana/grafana:latest
+#      container_name: grafana
+#      ports:
+#        - "3000:3000"
+#      environment:
+#        - GF_SECURITY_ADMIN_PASSWORD=admin
+#      depends_on:
+#        - influxdb
+#      volumes:
+#        - grafana_data:/var/lib/grafana  # Persist Grafana data
+#      restart: unless-stopped
+#
+#    flask-app:
+#      build:
+#        context: ./app
+#      container_name: flask-app
+#      ports:
+#        - "5000:5000"
+#      depends_on:
+#        - influxdb
+#      devices:
+#        - "/dev/snd:/dev/snd"  # Map the ALSA sound devices from host to container
+#      privileged: true         # Allow full access to host hardware
+#      restart: unless-stopped
+#
+#  volumes:
+#    influxdb_data: { }
+#    grafana_data: { }  # Define the volume for Grafana data
+

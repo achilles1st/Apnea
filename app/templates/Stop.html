@@ -13,7 +13,21 @@
     <link id="u-theme-google-font" rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:100,100i,300,300i,400,400i,500,500i,700,700i,900,900i|Open+Sans:300,300i,400,400i,500,500i,600,600i,700,700i,800,800i">
     <link id="u-page-google-font" rel="stylesheet" href="https://fonts.googleapis.com/css?family=Ubuntu:300,300i,400,400i,500,500i,700,700i">
     
-    
+    <script>
+        setInterval(function() {
+            fetch('/check_error')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.message);
+                        window.location.href = '/error';  // Redirect to error page
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking for errors:', error);
+                });
+        }, 5000);  // Poll every 5 seconds
+    </script>
     
     <script type="application/ld+json">{
 		"@context": "http://schema.org",
