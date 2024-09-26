@@ -216,13 +216,11 @@ class SnoringDetector:
         plt.title('Log-Mel Spectrogram')
         plt.show()
 
-        display.display(display.Audio(waveform, rate=44100))
+        display.display(display.Audio(waveform, rate=16000))
 
 
 if __name__ == "__main__":
-    detector = SnoringDetector(dataset_path='C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/44100_additions',
-                               output_sequence_length=44100
-                               )
+    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/dataset_16')
     detector.load_data()
     detector.preprocess_data()
     detector.build_model()
