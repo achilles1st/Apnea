@@ -6,6 +6,7 @@ import keras
 from keras import layers, models
 from IPython import display
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from keras import regularizers
 
 
 class SnoringDetector:
@@ -57,53 +58,99 @@ class SnoringDetector:
         self.val_log_mel_ds = self._make_log_mel_ds(self.val_ds)
         self.test_log_mel_ds = self._make_log_mel_ds(self.test_ds)
 
-        # Normalize the data
-        self.norm_layer = layers.Normalization()
-        self.norm_layer.adapt(data=self.train_log_mel_ds.map(lambda spec, label: spec))
+        self.train_log_mel_ds = self.train_log_mel_ds.cache().shuffle(10000).prefetch(tf.data.AUTOTUNE)
+        self.val_log_mel_ds = self.val_log_mel_ds.cache().prefetch(tf.data.AUTOTUNE)
+        self.test_log_mel_ds = self.test_log_mel_ds.cache().prefetch(tf.data.AUTOTUNE)
+
+        self.train_log_mel_not_flat_ds = self._make_log_mel_not_flat_ds(self.train_ds)
 
     @staticmethod
     def _get_log_mel(waveform):
         stfts = tf.signal.stft(
             waveform, frame_length=512, frame_step=256)
+        # Obtain the magnitude of the STFT.
         spectrograms = tf.abs(stfts)
+        # Warp the linear scale spectrograms into the mel-scale.
         num_spectrogram_bins = stfts.shape[-1]
         lower_edge_hertz, upper_edge_hertz, num_mel_bins = 40.0, 6000.0, 30
         linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
-            num_mel_bins, num_spectrogram_bins, 16000, lower_edge_hertz, upper_edge_hertz)
+            num_mel_bins, num_spectrogram_bins, 16000, lower_edge_hertz,
+            upper_edge_hertz)
         mel_spectrograms = tf.tensordot(
             spectrograms, linear_to_mel_weight_matrix, 1)
         mel_spectrograms.set_shape(spectrograms.shape[:-1].concatenate(
             linear_to_mel_weight_matrix.shape[-1:]))
 
+        # Compute a stabilized log to get log-magnitude mel-scale spectrograms.
         log_mel_spectrograms = tf.math.log(mel_spectrograms + 1e-6)
-        log_mel_spectrograms = log_mel_spectrograms[..., tf.newaxis]  # Add channel dimension
+        log_mel_spectrograms = tf.reshape(log_mel_spectrograms, [-1, 1830])
+        return log_mel_spectrograms
+
+    @staticmethod
+    def _get_log_mel_not_flat(waveform):
+        stfts = tf.signal.stft(
+            waveform, frame_length=512, frame_step=256)
+        # Obtain the magnitude of the STFT.
+        spectrograms = tf.abs(stfts)
+        # Warp the linear scale spectrograms into the mel-scale.
+        num_spectrogram_bins = stfts.shape[-1]
+        lower_edge_hertz, upper_edge_hertz, num_mel_bins = 40.0, 6000.0, 30
+        linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
+            num_mel_bins, num_spectrogram_bins, 16000, lower_edge_hertz,
+            upper_edge_hertz)
+        mel_spectrograms = tf.tensordot(
+            spectrograms, linear_to_mel_weight_matrix, 1)
+        mel_spectrograms.set_shape(spectrograms.shape[:-1].concatenate(
+            linear_to_mel_weight_matrix.shape[-1:]))
+
+        # Compute a stabilized log to get log-magnitude mel-scale spectrograms.
+        log_mel_spectrograms = tf.math.log(mel_spectrograms + 1e-6)
+        log_mel_spectrograms = log_mel_spectrograms[..., tf.newaxis]
         return log_mel_spectrograms
 
     def _make_log_mel_ds(self, ds):
         return ds.map(
             map_func=lambda audio, label: (self._get_log_mel(audio), label),
-            num_parallel_calls=tf.data.AUTOTUNE
-        )
+            num_parallel_calls=tf.data.AUTOTUNE)
 
-    def build_model(self):
-        # Get input shape
-        for example_log_mels, _ in self.train_log_mel_ds.take(1):
-            input_shape = example_log_mels.shape[1:]
+    def _make_log_mel_not_flat_ds(self, ds):
+        return ds.map(
+            map_func=lambda audio, label: (self._get_log_mel_not_flat(audio), label),
+            num_parallel_calls=tf.data.AUTOTUNE)
+
+    def build_model(self, l1_value=0.0001):
+        for example_log_mels, example_lm_labels in self.train_log_mel_ds.take(1):
             break
+        input_shape = example_log_mels.shape[1:]
+
+        # Instantiate the `tf.keras.layers.Normalization` layer.
+        self.norm_layer = layers.Normalization()
+        # Fit the state of the layer to the spectrograms
+        # with `Normalization.adapt`.
+        self.norm_layer.adapt(data=self.train_log_mel_not_flat_ds.map(map_func=lambda spec, label: spec))
 
         self.model = models.Sequential([
             layers.Input(shape=input_shape),
+            layers.Reshape((61, 30, 1)),
+            # Downsample the input.
+            layers.Resizing(32, 30),
+            # Normalize.
             self.norm_layer,
-            layers.Conv2D(32, 3, activation='relu', padding='same'),
-            layers.MaxPooling2D((2, 2)),
-            layers.Conv2D(64, 3, activation='relu', padding='same'),
-            layers.MaxPooling2D((2, 2)),
-            layers.Conv2D(128, 3, activation='relu', padding='same'),
-            layers.MaxPooling2D((2, 2)),
+            layers.Conv2D(32, (3, 3), padding='same', activation="relu",
+                          kernel_regularizer=regularizers.l1(l1_value)),
+            layers.Conv2D(32, (3, 3), activation="relu", kernel_regularizer=regularizers.l1(l1_value)),
+            layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding='valid'),
+            layers.Dropout(0.25),
+            layers.Conv2D(64, (3, 3), padding='same', activation="relu",
+                          kernel_regularizer=regularizers.l1(l1_value)),
+            layers.Conv2D(64, (3, 3), activation="relu", kernel_regularizer=regularizers.l1(l1_value)),
+            layers.MaxPooling2D(pool_size=(2, 2), strides=(2, 2), padding='valid'),
+            layers.Dropout(0.25),
             layers.Flatten(),
-            layers.Dense(128, activation='relu'),
+            layers.Dense(512, activation="relu", kernel_regularizer=regularizers.l1(l1_value)),
             layers.Dropout(0.5),
-            layers.Dense(1, activation='sigmoid'),
+            layers.Dense(64, activation="relu", kernel_regularizer=regularizers.l1(l1_value)),
+            layers.Dense(1, activation="sigmoid", kernel_regularizer=regularizers.l1(l1_value))
         ])
 
         self.model.compile(
@@ -116,25 +163,18 @@ class SnoringDetector:
 
     def train_model(self, epochs=100, patience=10):
         checkpoint = keras.callbacks.ModelCheckpoint(
-            'models/cnn_new.keras',
+            'models/cnn_new_big_data.keras',
             verbose=1,
             monitor='val_loss',
             save_best_only=True,
             mode='auto'
         )
 
-        early_stopping = keras.callbacks.EarlyStopping(
-            monitor='val_loss',
-            patience=patience,
-            verbose=1,
-            restore_best_weights=True
-        )
-
         self.history = self.model.fit(
             self.train_log_mel_ds,
             validation_data=self.val_log_mel_ds,
             epochs=epochs,
-            callbacks=[early_stopping, checkpoint],
+            callbacks=[keras.callbacks.EarlyStopping(verbose=1, patience=patience), checkpoint],
         )
 
         return self.history
@@ -220,13 +260,14 @@ class SnoringDetector:
 
 
 if __name__ == "__main__":
-    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/dataset_16')
+    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/dataset_16/additions')
     detector.load_data()
     detector.preprocess_data()
     detector.build_model()
-    history = detector.train_model()
+    history = detector.train_model(epochs=64, patience=10)
+    # plots
     detector.plot_training_history()
     detector.evaluate_model()
     detector.plot_confusion_matrix()
-    detector.plot_sample_waveforms()
+    #detector.plot_sample_waveforms()
 
