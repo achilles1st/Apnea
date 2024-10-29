@@ -1,17 +1,13 @@
-import os
 import numpy as np
 import tensorflow as tf
-from datetime import timedelta
-from preprocessing import MFCCProcessor  # Importing the MFCCProcessor class
 import scipy.io.wavfile as wav
-from sklearn.preprocessing import StandardScaler
 from collections import Counter
 import librosa
 
 
 # Define constants
 # AUDIO_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/snoring_16k.wav'  # Replace with the actual path to your audio file
-MODEL_PATH = './models/cnn_new_big_data.keras'  # Replace with the path to your trained model
+MODEL_PATH = './models/cnn_new_big_data_deviation.keras'  # Replace with the path to your trained model
 SEGMENT_DURATION = 1  # in seconds
 THRESHOLD = 0.5  # Probability threshold for snoring classification
 MIN_SNORE_SOUNDS = 1  # Minimum snore sounds in a 6-second window to confirm snoring
@@ -20,12 +16,12 @@ WINDOW_SIZE = 6  # Sliding window size in seconds
 # Load the trained model
 model = tf.keras.models.load_model(MODEL_PATH)
 
-# Initialize the MFCCProcessor with dummy directories, as we use only its method directly
-processor = MFCCProcessor(directory='', save_directory='', save_img=False)
 
 def get_log_mel(waveform, sample_rate):
-    stfts = tf.signal.stft(
-        waveform, frame_length=512, frame_step=256)
+    frame_length = int(0.032 * sample_rate)  # Approximately 32ms
+    frame_step = int(0.016 * sample_rate)  # Approximately 16ms
+    stfts = tf.signal.stft(waveform, frame_length=frame_length, frame_step=frame_step)
+
     # Obtain the magnitude of the STFT.
     spectrograms = tf.abs(stfts)
     # Warp the linear scale spectrograms into the mel-scale.
@@ -62,10 +58,10 @@ def classify_snoring_segment(segment, sample_rate):
     return probability
 
 if __name__ == "__main__":
-    AUDIO_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/recorded_strong_breathing.wav'  # Replace with the actual path to your audio file
+    AUDIO_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/nothing_44100.wav'  # Replace with the actual path to your audio file
 
-    OUTPUT_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/recorded_breathing_16k.wav'  # Replace with the path to save the resampled audio
-    TARGET_SAMPLE_RATE = 16000  # Target sample rate for resampling
+    OUTPUT_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/recorded.wav'  # Replace with the path to save the resampled audio
+    TARGET_SAMPLE_RATE = 44100  # Target sample rate for resampling
     # Load the original audio file
     audio_data, original_sample_rate = librosa.load(AUDIO_FILE, sr=None)  # Load with original sample rate
 
