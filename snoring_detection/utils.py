@@ -44,7 +44,11 @@ def load_dataset(main_path = './',preprocess = 'mfcc'):
 
     # also normalize validation dataset 
     if len(val_y)>0:
-        if preprocess=='psd': val_x = np.log(val_x)
+        if preprocess=='psd':
+            val_x = np.log(val_x)
         val_x = (val_x-x_mean)/x_std
     return train_x, test_x, val_x, train_y, test_y, val_y, x_mean, x_std
+
+
+
 

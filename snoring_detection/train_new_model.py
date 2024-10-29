@@ -7,10 +7,11 @@ from keras import layers, models
 from IPython import display
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from keras import regularizers
+from sklearn.model_selection import train_test_split
 
 
 class SnoringDetector:
-    def __init__(self, dataset_path, batch_size=150, validation_split=0.2, seed=0, output_sequence_length=16000):
+    def __init__(self, dataset_path, batch_size=150, validation_split=0.2, seed=0, output_sequence_length=44100, sample_rate=44100):
         self.dataset_path = dataset_path
         self.batch_size = batch_size
         self.validation_split = validation_split
@@ -24,29 +25,47 @@ class SnoringDetector:
         self.norm_layer = None
         self.history = None  # Store training history
         self.test_log_mel_ds = None  # Ensure test dataset is accessible
+        self.sample_rate = sample_rate
 
     def load_data(self):
         data_dir = pathlib.Path(self.dataset_path)
-        self.train_ds, self.val_ds = keras.utils.audio_dataset_from_directory(
+        dataset = keras.utils.audio_dataset_from_directory(
             directory=data_dir,
             batch_size=self.batch_size,
-            validation_split=self.validation_split,
-            seed=self.seed,
-            output_sequence_length=self.output_sequence_length,
-            subset='both'
+            output_sequence_length=self.output_sequence_length
         )
 
-        self.label_names = np.array(self.train_ds.class_names)
+        self.label_names = np.array(dataset.class_names)
         print("\nLabel names:", self.label_names)
+
+        # Convert dataset to numpy arrays
+        audio_data = []
+        labels = []
+        for audio, label in dataset:
+            audio_data.extend(audio.numpy())
+            labels.extend(label.numpy())
+
+        audio_data = np.array(audio_data)
+        labels = np.array(labels)
+
+        # Split the data into training, validation, and test sets
+        X_train, X_temp, y_train, y_temp = train_test_split(audio_data, labels, test_size=self.validation_split, random_state=self.seed, stratify=labels)
+        X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=self.seed, stratify=y_temp)
+
+        # Convert back to tf.data.Dataset
+        self.train_ds = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(self.batch_size)
+        self.val_ds = tf.data.Dataset.from_tensor_slices((X_val, y_val)).batch(self.batch_size)
+        self.test_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(self.batch_size)
 
         # Squeeze the audio data
         self.train_ds = self.train_ds.map(self._squeeze, tf.data.AUTOTUNE)
         self.val_ds = self.val_ds.map(self._squeeze, tf.data.AUTOTUNE)
+        self.test_ds = self.test_ds.map(self._squeeze, tf.data.AUTOTUNE)
 
-        # Split validation dataset into validation and test datasets
-        self.test_ds = self.val_ds.shard(num_shards=2, index=0)
-        self.val_ds = self.val_ds.shard(num_shards=2, index=1)
-
+    @staticmethod
+    def _squeeze(audio, labels):
+        audio = tf.squeeze(audio, axis=-1)
+        return audio, labels
     @staticmethod
     def _squeeze(audio, labels):
         audio = tf.squeeze(audio, axis=-1)
@@ -64,17 +83,19 @@ class SnoringDetector:
 
         self.train_log_mel_not_flat_ds = self._make_log_mel_not_flat_ds(self.train_ds)
 
-    @staticmethod
-    def _get_log_mel(waveform):
-        stfts = tf.signal.stft(
-            waveform, frame_length=512, frame_step=256)
+
+    def _get_log_mel(self, waveform):
+        frame_length = int(0.032 * self.sample_rate)  # Approximately 32ms
+        frame_step = int(0.016 * self.sample_rate)  # Approximately 16ms
+        stfts = tf.signal.stft(waveform, frame_length=frame_length, frame_step=frame_step)
+
         # Obtain the magnitude of the STFT.
         spectrograms = tf.abs(stfts)
         # Warp the linear scale spectrograms into the mel-scale.
         num_spectrogram_bins = stfts.shape[-1]
         lower_edge_hertz, upper_edge_hertz, num_mel_bins = 40.0, 6000.0, 30
         linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
-            num_mel_bins, num_spectrogram_bins, 16000, lower_edge_hertz,
+            num_mel_bins, num_spectrogram_bins, self.sample_rate, lower_edge_hertz,
             upper_edge_hertz)
         mel_spectrograms = tf.tensordot(
             spectrograms, linear_to_mel_weight_matrix, 1)
@@ -86,17 +107,17 @@ class SnoringDetector:
         log_mel_spectrograms = tf.reshape(log_mel_spectrograms, [-1, 1830])
         return log_mel_spectrograms
 
-    @staticmethod
-    def _get_log_mel_not_flat(waveform):
-        stfts = tf.signal.stft(
-            waveform, frame_length=512, frame_step=256)
+    def _get_log_mel_not_flat(self, waveform):
+        frame_length = int(0.032 * self.sample_rate)
+        frame_step = int(0.016 * self.sample_rate)
+        stfts = tf.signal.stft(waveform, frame_length=frame_length, frame_step=frame_step)
         # Obtain the magnitude of the STFT.
         spectrograms = tf.abs(stfts)
         # Warp the linear scale spectrograms into the mel-scale.
         num_spectrogram_bins = stfts.shape[-1]
         lower_edge_hertz, upper_edge_hertz, num_mel_bins = 40.0, 6000.0, 30
         linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
-            num_mel_bins, num_spectrogram_bins, 16000, lower_edge_hertz,
+            num_mel_bins, num_spectrogram_bins, self.sample_rate, lower_edge_hertz,
             upper_edge_hertz)
         mel_spectrograms = tf.tensordot(
             spectrograms, linear_to_mel_weight_matrix, 1)
@@ -163,7 +184,7 @@ class SnoringDetector:
 
     def train_model(self, epochs=100, patience=10):
         checkpoint = keras.callbacks.ModelCheckpoint(
-            'models/cnn_new_big_data.keras',
+            'models/cnn_new_big_data_deviation_44k.keras',
             verbose=1,
             monitor='val_loss',
             save_best_only=True,
@@ -256,15 +277,15 @@ class SnoringDetector:
         plt.title('Log-Mel Spectrogram')
         plt.show()
 
-        display.display(display.Audio(waveform, rate=16000))
+        display.display(display.Audio(waveform, rate=self.sample_rate))
 
 
 if __name__ == "__main__":
-    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/dataset_16/additions')
+    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/44100_additions/44_clean')
     detector.load_data()
     detector.preprocess_data()
     detector.build_model()
-    history = detector.train_model(epochs=64, patience=10)
+    history = detector.train_model(epochs=64, patience=12)
     # plots
     detector.plot_training_history()
     detector.evaluate_model()
