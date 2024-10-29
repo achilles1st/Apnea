@@ -6,13 +6,13 @@ from preprocessing import MFCCProcessor  # Importing the MFCCProcessor class
 import scipy.io.wavfile as wav
 from sklearn.preprocessing import StandardScaler
 from collections import Counter
+import librosa
 
 
 # Define constants
-AUDIO_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/recorded_audio_mono.wav'  # Replace with the actual path to your audio file
-MODEL_PATH = 'C:/Users/tosics/repos/Apnea/snoring_detection/models/cnn.keras'  # Replace with the path to your trained model
+# AUDIO_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/snoring_16k.wav'  # Replace with the actual path to your audio file
+MODEL_PATH = './models/cnn_new_big_data.keras'  # Replace with the path to your trained model
 SEGMENT_DURATION = 1  # in seconds
-SAMPLE_RATE = 48000  # sampling rate of audio
 THRESHOLD = 0.5  # Probability threshold for snoring classification
 MIN_SNORE_SOUNDS = 1  # Minimum snore sounds in a 6-second window to confirm snoring
 WINDOW_SIZE = 6  # Sliding window size in seconds
@@ -23,83 +23,102 @@ model = tf.keras.models.load_model(MODEL_PATH)
 # Initialize the MFCCProcessor with dummy directories, as we use only its method directly
 processor = MFCCProcessor(directory='', save_directory='', save_img=False)
 
+def get_log_mel(waveform, sample_rate):
+    stfts = tf.signal.stft(
+        waveform, frame_length=512, frame_step=256)
+    # Obtain the magnitude of the STFT.
+    spectrograms = tf.abs(stfts)
+    # Warp the linear scale spectrograms into the mel-scale.
+    num_spectrogram_bins = stfts.shape[-1]
+    lower_edge_hertz, upper_edge_hertz, num_mel_bins = 40.0, 6000.0, 30
+    linear_to_mel_weight_matrix = tf.signal.linear_to_mel_weight_matrix(
+        num_mel_bins, num_spectrogram_bins, sample_rate, lower_edge_hertz,
+        upper_edge_hertz)
+    mel_spectrograms = tf.tensordot(
+        spectrograms, linear_to_mel_weight_matrix, 1)
+    mel_spectrograms.set_shape(spectrograms.shape[:-1].concatenate(
+        linear_to_mel_weight_matrix.shape[-1:]))
 
-def classify_snoring(audio_file):
-    """Classifies snoring events in the given audio file."""
-    # Load the entire audio file
-    fs, audio = wav.read(audio_file)
-    if audio.ndim != 1:
-        audio = audio[:, 0]  # Ensure mono channel
+    # Compute a stabilized log to get log-magnitude mel-scale spectrograms.
+    log_mel_spectrograms = tf.math.log(mel_spectrograms + 1e-6)
+    log_mel_spectrograms = tf.reshape(log_mel_spectrograms, [-1, 1830])
+    return log_mel_spectrograms
 
-    if fs != 16000:
-        print('Audio file must be 16kHz')
+def classify_snoring_segment(segment, sample_rate):
+    """Classifies snoring events in the given audio segment."""
+    # Convert segment to tensor and normalize
+    x = tf.convert_to_tensor(segment, dtype=tf.float32)
+    x = x / tf.reduce_max(tf.abs(x))  # Normalize between -1 and 1
 
-    # mfcc = processor.apply_mfcc(fs, audio)
+    # Ensure x is 1D
+    x = tf.reshape(x, [-1])
 
+    # Get log-mel spectrogram
+    x = get_log_mel(x, sample_rate)
 
-    # scaler = StandardScaler()
-    # mfcc = scaler.fit_transform(mfcc)
-
-    # mfcc = np.expand_dims(mfcc, axis=(0, -1))
-    # Predict snoring probability
-    # prediction = model.predict(mfcc)[0][0]
-    # print((prediction > 0.5).astype(int))
-    duration = len(audio) / fs
-    # snore_timestamps = []
-    #
-    # Process the audio in segments
-    mfccs = []
-    for i in range(0, int(duration), SEGMENT_DURATION):
-        start = i * fs
-        end = start + SEGMENT_DURATION * fs
-        if end > len(audio):
-            break
-
-        segment = audio[start:end]
-        mfcc = processor.apply_mfcc(fs, segment)  # Use MFCCProcessor's method for extraction
-        mfccs.append(mfcc)
-        #mfcc = np.expand_dims(mfcc, axis=(0, -1))  # Add batch and channel dimensions for prediction
-    return mfccs
-        # Predict snoring probability
-    #    prediction = model.predict(mfcc)[0][0]
-        # is_snore = prediction >= THRESHOLD
-        #
-        # # Use a sliding window to confirm snoring
-        # if len(snore_timestamps) >= WINDOW_SIZE:
-        #     snore_timestamps.pop(0)  # Maintain a fixed window size
-        # snore_timestamps.append(is_snore)
-        #
-        # # Confirm snoring if at least 2 out of 6 are snoring sounds
-        # if snore_timestamps.count(True) >= MIN_SNORE_SOUNDS:
-        #     print(f"Snoring detected at {timedelta(seconds=i)}")
-        #     # Log the time or perform other actions as needed
-
+    # Make prediction
+    prediction = model(x)
+    probability = prediction[0, 0].numpy()
+    return probability
 
 if __name__ == "__main__":
-    # mfccs = []
-    # for i in range(0, 499):
-    #     AUDIO_FILE = f'C:/Users/tosics/repos/Apnea/snoring_detection/data16/0/0_{i}.wav'
-    #     mfcc = classify_snoring(AUDIO_FILE)
-    #     mfccs.append(mfcc)
+    AUDIO_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/recorded_strong_breathing.wav'  # Replace with the actual path to your audio file
 
-    AUDIO_FILE = "C:/Users/tosics/repos/Apnea/snoring_detection/output.wav"
-    mfccs = classify_snoring(AUDIO_FILE)
-    mfccs_array = np.array(mfccs)
-    x_mean = np.mean(mfccs_array, axis=0)
-    x_std = np.std(mfccs_array, axis=0)
-    mfccs_array_norm = (mfccs_array - x_mean) / x_std
+    OUTPUT_FILE = 'C:/Users/tosic/Arduino_projects/sensor_com/old_files/recorded_breathing_16k.wav'  # Replace with the path to save the resampled audio
+    TARGET_SAMPLE_RATE = 16000  # Target sample rate for resampling
+    # Load the original audio file
+    audio_data, original_sample_rate = librosa.load(AUDIO_FILE, sr=None)  # Load with original sample rate
 
-    mfccs_array_norm = np.expand_dims(mfccs_array_norm, axis=-1)
-    prediction = model.predict(mfccs_array_norm)
-    #print((prediction > 0.5).astype(int))
+    # Check if resampling is needed
+    if original_sample_rate != TARGET_SAMPLE_RATE:
+        # Resample the audio to the target sample rate
+        audio_data = librosa.resample(audio_data, orig_sr=original_sample_rate, target_sr=TARGET_SAMPLE_RATE)
+        print(f"Resampled from {original_sample_rate} Hz to {TARGET_SAMPLE_RATE} Hz.")
 
-    array = (prediction > 0.8).astype(int)
-    indices_of_ones = np.where(array == 1)[0]
-    print(indices_of_ones)
+        # Save the resampled audio to the output file
+        wav.write(OUTPUT_FILE, TARGET_SAMPLE_RATE, audio_data)
+        print(f"Resampled audio saved to {OUTPUT_FILE}")
+        AUDIO_FILE = OUTPUT_FILE
+    else:
+        print(f"Audio is already at {TARGET_SAMPLE_RATE} Hz.")
 
-    flat_array = [item for sublist in array for item in sublist]
+    # Read the longer audio file
+    sample_rate, data = wav.read(AUDIO_FILE)  # data is a numpy array
 
-    counter = Counter(flat_array)
+    # Ensure data is mono
+    if data.ndim > 1:
+        data = data[:, 0]  # Take first channel
 
-    print(f"Number of 1s: {counter[1]}")
-    print(f"Number of 0s: {counter[0]}")
+    # Calculate number of samples per segment
+    samples_per_segment = int(sample_rate * SEGMENT_DURATION)
+
+    # Number of segments
+    total_samples = data.shape[0]
+    num_segments = total_samples // samples_per_segment
+
+    features = []
+
+    for i in range(num_segments):
+        start_sample = i * samples_per_segment
+        end_sample = start_sample + samples_per_segment
+        segment = data[start_sample:end_sample]
+
+        # Skip if segment is shorter than expected (can happen at the end)
+        if len(segment) < samples_per_segment:
+            continue
+
+        # Classify the segment
+        probability = classify_snoring_segment(segment, sample_rate)
+        if probability >= THRESHOLD:
+            features.append(1)
+        else:
+            features.append(0)
+
+    # Analyze the results
+    array = np.array(features)
+    indices_of_snoring = np.where(array == 1)[0]
+    print(f"Indices of snoring segments: {indices_of_snoring}")
+
+    counter = Counter(array)
+    print(f"Number of snoring segments (1s): {counter[1]}")
+    print(f"Number of non-snoring segments (0s): {counter[0]}")
