@@ -4,17 +4,14 @@ import threading
 import os
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS, ASYNCHRONOUS
-import time
 from influxdb_client.domain.write_precision import WritePrecision
 from serial.tools import list_ports
 from pulseoxy.pulox_250_realtime import CMS50Dplus
 import wave
 import datetime
-import numpy as np
-import sys
+import configparser
 from influxdb_client import WriteOptions
 from queue import Queue, Empty
-
 
 app = Flask(__name__)
 
@@ -23,15 +20,23 @@ threads = []  # List to track active threads
 
 channels = 1
 sample_rate = 44100
-device_index = 1  # for windows, use 1
+device_index = 0  # for windows, use 1
+
+# Load configuration from config.ini
+config = configparser.ConfigParser()
+config.read('config.ini')
 
 # InfluxDB connection settings
-INFLUXDB_URL = "http://localhost:8086"
-INFLUXDB_TOKEN = "9RdNMHQLhHuujCeLFCJpunRbkOOq7PDN2RoxW55-sl8x3_CBPuaHvLXQxL9QqJfdv7Kod82hnrPJkZi8xVUfjQ=="
-INFLUXDB_ORG = "TU"
-INFLUXDB_BUCKET = "audio"
+# INFLUXDB_URL = "http://localhost:8086"  # for windows
+# INFLUXDB_TOKEN ="9RdNMHQLhHuujCeLFCJpunRbkOOq7PDN2RoxW55-sl8x3_CBPuaHvLXQxL9QqJfdv7Kod82hnrPJkZi8xVUfjQ=="
 
-RECORDINGS_DIR = 'C:/Users/tosic/Arduino_projects/sensor_com/app/data/recordings'
+# for raspi
+INFLUXDB_URL = config['INFLUXDB']['URL']
+INFLUXDB_TOKEN = config['INFLUXDB']['TOKEN']
+INFLUXDB_ORG = config['INFLUXDB']['ORG']
+INFLUXDB_BUCKET = config['INFLUXDB']['BUCKET']
+
+RECORDINGS_DIR = '/data/recordings'
 
 # Initialize InfluxDB client
 client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
@@ -53,30 +58,27 @@ user_name = ""  # Global variable to store the username
 error_event = threading.Event()
 error_message = ""
 
-# Initialize an empty NumPy array
-audio_data = np.array([], dtype='int16')
 
-def audio_callback(indata, frames_count, time_info, status):
-    global user_name, audio_data
-    if recording_event.is_set():
-        if status:
-            print(f"Status: {status}")
-        audio_data = np.append(audio_data, indata.copy())
-
-
-def record_audio():
+def record_audio(wf):
     global error_message
     try:
         # Start the stream using sounddevice with specified device index
-        with sd.InputStream(device=device_index, channels=channels, samplerate=sample_rate, dtype='int16', callback=audio_callback):
+        with sd.InputStream(device=device_index, channels=channels, samplerate=sample_rate, dtype='int16') as stream:
             while recording_event.is_set():
-                sd.sleep(100)  # Small delay to prevent high CPU usage
+                indata = stream.read(1024)[0]  # Read 1024 frames
+                if indata.size > 0:
+                    wf.writeframes(indata.tobytes())
+
+        # After recording, update the WAV header if necessary
+        wf.close()
 
     except Exception as e:
         error_message = f"Error recording audio: {e}"
         print(error_message)
         error_event.set()
+        wf.close()
         recording_event.clear()
+
 
 def write_to_influxdb():
     global error_message
@@ -110,6 +112,7 @@ def write_to_influxdb():
     if batch_points:
         write_api.write(bucket="Pulseoxy", org=INFLUXDB_ORG, record=batch_points)
 
+
 def record_oximeter():
     global error_message
 
@@ -127,18 +130,6 @@ def record_oximeter():
         try:
             datapoints = oximeter.get_realtime_data()
             for datapoint in datapoints:
-                sys.stdout.write(
-                    "\rSignal: {:>2}"
-                    " | PulseRate: {:>3}"
-                    " | PulseWave: {:>3}"
-                    " | SpO2: {:>2}%"
-                    " | ProbeError: {:>1}".format(
-                        datapoint.signal_strength,
-                        datapoint.pulse_rate,
-                        datapoint.pulse_waveform,
-                        datapoint.spO2,
-                        datapoint.probe_error))
-                sys.stdout.flush()
 
                 if not recording_event.is_set():
                     break  # Stop processing if recording is stopped
@@ -152,6 +143,7 @@ def record_oximeter():
             recording_event.clear()
             break
 
+
 @app.route('/')
 def index():
     global error_message
@@ -162,14 +154,23 @@ def index():
 
 @app.route('/start', methods=['POST'])
 def start():
-    global user_name, error_message
+    global user_name, error_message, wav_filename
     error_event.clear()  # Reset the error event
     error_message = ""  # Reset the error message
 
     user_name = request.form.get('user_name')  # Get the username from the form
+    # Generate the WAV filename
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    wav_filename = os.path.join(RECORDINGS_DIR, f"{user_name}_{timestamp}.wav")
+
+    # Open the WAV file for writing
+    wf = wave.open(wav_filename, 'wb', )
+    wf.setnchannels(channels)
+    wf.setsampwidth(2)  # 16-bit audio
+    wf.setframerate(sample_rate)
 
     recording_event.set()  # Set the recording event to start
-    audio_thread = threading.Thread(target=record_audio, daemon=True)
+    audio_thread = threading.Thread(target=record_audio, args=(wf,), daemon=True)
     oximeter_thread = threading.Thread(target=record_oximeter, daemon=True)
     influxdb_thread = threading.Thread(target=write_to_influxdb, daemon=True)
 
@@ -183,7 +184,7 @@ def start():
 
 @app.route('/stop', methods=['POST'])
 def stop():
-    global audio_data, user_name, error_event, error_message
+    global user_name, error_event, error_message
 
     recording_event.clear()  # Signal threads to stop
     data_queue.join()  # Wait until all data has been processed
@@ -193,29 +194,19 @@ def stop():
     for thread in threads:
         thread.join()
 
-    # Save audio data only if no error occurred
-    if not error_event.is_set():
-        # save audio data to a file
-        timestamp = datetime.datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d_%H-%M-%S')
-        filename = os.path.join(RECORDINGS_DIR, f"{user_name}_{timestamp}.wav")
-
-        with wave.open(filename, 'wb') as wf:
-            wf.setnchannels(channels)
-            wf.setsampwidth(2)  # 16-bit audio
-            wf.setframerate(sample_rate)
-            wf.writeframes(audio_data.tobytes())
-    else:
-        error_message = f"Error saving audio file!"
-        return redirect(url_for('/error'))
-
-
     threads.clear()  # Clear the list of threads
 
     # Reset the error event and message for future recordings
     error_event.clear()
     error_message = ""
 
+    # After flushing and joining threads
+    write_api.close()  # Close the write API
+    client.close()  # Close the InfluxDB client
+    data_queue.queue.clear()  # Clear any remaining items in the queue
+
     return render_template('/Start.html')
+
 
 @app.route('/check_error')
 def check_error():
@@ -223,6 +214,7 @@ def check_error():
         return {'error': True, 'message': error_message}
     else:
         return {'error': False}
+
 
 @app.route('/error')
 def error():
