@@ -58,28 +58,6 @@ user_name = ""  # Global variable to store the username
 error_event = threading.Event()
 error_message = ""
 
-
-def record_audio(wf):
-    global error_message
-    try:
-        # Start the stream using sounddevice with specified device index
-        with sd.InputStream(device=device_index, channels=channels, samplerate=sample_rate, dtype='int16') as stream:
-            while recording_event.is_set():
-                indata = stream.read(1024)[0]  # Read 1024 frames
-                if indata.size > 0:
-                    wf.writeframes(indata.tobytes())
-
-        # After recording, update the WAV header if necessary
-        wf.close()
-
-    except Exception as e:
-        error_message = f"Error recording audio: {e}"
-        print(error_message)
-        error_event.set()
-        wf.close()
-        recording_event.clear()
-
-
 def write_to_influxdb():
     global error_message
     batch_points = []
@@ -112,6 +90,25 @@ def write_to_influxdb():
     if batch_points:
         write_api.write(bucket="Pulseoxy", org=INFLUXDB_ORG, record=batch_points)
 
+def record_audio(wf):
+    global error_message
+    try:
+        # Start the stream using sounddevice with specified device index
+        with sd.InputStream(device=device_index, channels=channels, samplerate=sample_rate, dtype='int16') as stream:
+            while recording_event.is_set():
+                indata = stream.read(1024)[0]  # Read 1024 frames
+                if indata.size > 0:
+                    wf.writeframes(indata.tobytes())
+
+        # After recording, update the WAV header if necessary
+        wf.close()
+
+    except Exception as e:
+        error_message = f"Error recording audio: {e}"
+        print(error_message)
+        error_event.set()
+        wf.close()
+        recording_event.clear()
 
 def record_oximeter():
     global error_message
