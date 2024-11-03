@@ -13,6 +13,7 @@ import configparser
 from influxdb_client import WriteOptions
 from queue import Queue, Empty
 import time
+from check_recordings import SnoringDetector
 # imports for raspberry pi i2c communication
 import board
 import busio
@@ -291,6 +292,10 @@ def stop():
     client.close()  # Close the InfluxDB client
     data_queue.queue.clear()  # Clear any remaining items in the queue
     ecg_data_queue.queue.clear()  # Clear any remaining items in the ECG queue
+
+    # Call the processing function for the newly recorded file
+    detector = SnoringDetector()
+    detector.process_new_recording()
 
     return render_template('/Start.html')
 
