@@ -1,1 +1,0 @@
-0 3 * * * /usr/local/bin/python /app/check_recordings.py >> /var/log/cron.log 2>&1
