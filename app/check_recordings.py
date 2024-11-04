@@ -1,21 +1,18 @@
-import os
 import tensorflow as tf
-import soundfile as sf
+import numpy as np
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import ASYNCHRONOUS, WriteOptions
 from influxdb_client.domain.write_precision import WritePrecision
 import datetime
 import configparser
 
-
 class SnoringDetector:
     def __init__(self):
         # Constants
         self.MODEL_PATH = '/app/model/cnn_new_big_data_deviation_44k.keras'  # Path of the model
-        self.RECORDINGS_DIR = '/data/recordings'
-        self.SEGMENT_DURATION = 1  # Duration of each audio segment in seconds
         self.THRESHOLD = 0.5  # Probability threshold for snoring classification
-        self.SAMPLE_RATE = 44100  # Expected sample rate of audio files
+        self.SAMPLE_RATE = 44100  # Expected sample rate of audio
+        self.SEGMENT_DURATION = 1  # Duration of each audio segment in seconds
 
         # Load configuration from config.ini
         self.config = configparser.ConfigParser()
@@ -86,84 +83,21 @@ class SnoringDetector:
         probability = prediction[0, 0].numpy()
         return probability
 
-    def process_audio_file(self, file_path):
-        print(f"Processing file: {file_path}")
+    def process_audio_segment(self, segment, user_name):
+        """Processes an audio segment for snoring detection."""
+        probability = self.classify_snoring_segment(segment, self.SAMPLE_RATE)
 
-        # Open the audio file as a stream
-        with sf.SoundFile(file_path) as f:
-            # Check sample rate
-            if f.samplerate != self.SAMPLE_RATE:
-                print(f"Sample rate mismatch: Expected {self.SAMPLE_RATE}, got {f.samplerate}. Resampling is required.")
-                return
+        if probability >= self.THRESHOLD:
+            event_time = datetime.datetime.utcnow()
 
-            samples_per_segment = int(f.samplerate * self.SEGMENT_DURATION)
-            total_snoring_duration = 0  # Initialize total snoring duration
-            total_segments = 0  # Total number of segments processed
+            # Write snoring event to InfluxDB
+            point = Point("snoring_events") \
+                .tag("user_name", user_name) \
+                .field("probability", probability) \
+                .time(event_time, WritePrecision.NS)
+            self.write_api.write(bucket=self.INFLUXDB_BUCKET, org=self.INFLUXDB_ORG, record=point)
 
-            while True:
-                # Read a segment
-                segment = f.read(samples_per_segment)
-                if len(segment) == 0:
-                    break  # End of file
-
-                total_segments += 1  # Increment total segments processed
-
-                # Process the segment
-                probability = self.classify_snoring_segment(segment, f.samplerate)
-
-                if probability >= self.THRESHOLD:
-                    event_time = datetime.datetime.utcnow()
-
-                    # Increment total snoring duration
-                    total_snoring_duration += self.SEGMENT_DURATION  # Each segment is of SEGMENT_DURATION seconds
-
-                    # Write individual snoring events to InfluxDB (optional)
-                    point = Point("snoring_events") \
-                        .field("probability", probability) \
-                        .time(event_time, WritePrecision.NS)
-                    self.write_api.write(bucket=self.INFLUXDB_BUCKET, org=self.INFLUXDB_ORG, record=point)
-
-            # After processing all segments, calculate snoring percentage
-            recording_duration = total_segments * self.SEGMENT_DURATION  # Total recording duration
-            snoring_percentage = (total_snoring_duration / recording_duration) * 100 if recording_duration > 0 else 0
-
-            # Create a summary point for total snoring duration
-            summary_point = Point("snoring_summary") \
-                .tag("file_name", os.path.basename(file_path)) \
-                .field("total_snoring_duration", total_snoring_duration) \
-                .field("recording_duration", recording_duration) \
-                .field("snoring_percentage", snoring_percentage) \
-                .time(datetime.datetime.now(datetime.timezone.utc), WritePrecision.NS)
-
-            self.write_api.write(bucket=self.INFLUXDB_BUCKET, org=self.INFLUXDB_ORG, record=summary_point)
-
-        print(f"Finished processing file: {file_path}")
-
-    def process_new_recording(self):
-        # Check if the directory exists and is accessible
-        if os.path.isdir(self.RECORDINGS_DIR):
-            # List audio files in the directory
-            audio_files = [f for f in os.listdir(self.RECORDINGS_DIR) if f.endswith('.wav') or f.endswith('.mp3')]
-
-            if not audio_files:
-                # Directory is empty; do nothing
-                print("No audio files to process.")
-            else:
-                # Process each audio file
-                for audio_file in audio_files:
-                    file_path = os.path.join(self.RECORDINGS_DIR, audio_file)
-                    self.process_audio_file(file_path)
-
-                    # Optionally, move or delete the processed file
-                    os.remove(file_path)  # Delete the file after processing
-
-                # Close InfluxDB client
-                self.write_api.close()
-                self.client.close()
-        else:
-            print(f"The directory {self.RECORDINGS_DIR} does not exist.")
-
-
-if __name__ == "__main__":
-    detector = SnoringDetector()
-    detector.process_new_recording()
+    def close(self):
+        """Closes the InfluxDB client."""
+        self.write_api.close()
+        self.client.close()
