@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 # Define constants
-MODEL_PATH = './models/cnn_new_big_data_deviation_44k.keras'  # Replace with the path to your trained model
+MODEL_PATH = '../models/cnn_latest_44k.keras'  # Replace with the path to your trained model
 SEGMENT_DURATION = 1  # Duration of each audio segment in seconds
 THRESHOLD = 0.5  # Probability threshold for snoring classification
 

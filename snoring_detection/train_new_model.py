@@ -184,7 +184,7 @@ class SnoringDetector:
 
     def train_model(self, epochs=100, patience=10):
         checkpoint = keras.callbacks.ModelCheckpoint(
-            'models/cnn_new_big_data_deviation_44k.keras',
+            'models/cnn_latest_44k.keras',
             verbose=1,
             monitor='val_loss',
             save_best_only=True,
@@ -281,7 +281,7 @@ class SnoringDetector:
 
 
 if __name__ == "__main__":
-    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/44100_additions/44_clean')
+    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset/44_clean')
     detector.load_data()
     detector.preprocess_data()
     detector.build_model()
