@@ -19,6 +19,7 @@ import board
 import busio
 import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.analog_in import AnalogIn
+from adafruit_ads1x15.ads1x15 import Mode
 
 app = Flask(__name__)
 
@@ -66,6 +67,7 @@ error_message = ""
 # Initialize SnoringDetector
 snoring_detector = SnoringDetector()
 
+
 def write_oxy_to_influxdb():
     global error_message
     batch_points = []
@@ -98,6 +100,7 @@ def write_oxy_to_influxdb():
     if batch_points:
         write_api.write(bucket=PULSEOXY_BUCKET, org=INFLUXDB_ORG, record=batch_points)
 
+
 def write_ecg_to_influxdb():
     global error_message
     batch_points = []
@@ -112,7 +115,7 @@ def write_ecg_to_influxdb():
             ecg_data_queue.task_done()
 
             # Write in batches
-            if len(batch_points) >= 500:
+            if len(batch_points) >= 128:
                 write_api.write(bucket=ECG_BUCKET, org=INFLUXDB_ORG, record=batch_points)
                 batch_points = []
         except Empty:
@@ -127,6 +130,7 @@ def write_ecg_to_influxdb():
     # Write any remaining points
     if batch_points:
         write_api.write(bucket=ECG_BUCKET, org=INFLUXDB_ORG, record=batch_points)
+
 
 def process_audio_segments():
     global error_message
@@ -143,6 +147,7 @@ def process_audio_segments():
             error_event.set()
             recording_event.clear()
             break
+
 
 def record_audio():
     global error_message
@@ -182,6 +187,7 @@ def record_audio():
         error_event.set()
         recording_event.clear()
 
+
 def record_oximeter():
     global error_message
 
@@ -212,18 +218,17 @@ def record_oximeter():
             recording_event.clear()
             break
 
+
 def record_ecg():
-    global error_message
+    global error_message, intervals
     try:
+        from adafruit_ads1x15.ads1x15 import Mode
         # Initialize I2C bus and ADS1115 ADC
         i2c = busio.I2C(board.SCL, board.SDA)
         ads = ADS.ADS1115(i2c)
-
-        # Configure ADC settings
         ads.gain = 1
-        ads.data_rate = 475
-
-        # Create analog input channel
+        ads.data_rate = 128  # 128 samples per second
+        ads.mode = Mode.CONTINUOUS  # Set continuous conversion mode
         ecg_channel = AnalogIn(ads, ADS.P0)
     except Exception as e:
         error_message = f"Error initializing ECG sensor: {e}"
@@ -232,15 +237,23 @@ def record_ecg():
         recording_event.clear()
         return
 
-    sampling_rate = ads.data_rate  # Use the ADC's data rate as the sampling rate
-    sampling_interval = 1.0 / sampling_rate
+    last_sample_time = None  # To store the time of the last sample
+    sampling_interval = 1.0 / ads.data_rate  # Calculate expected interval (7.8125 ms)
 
     while recording_event.is_set():
         try:
-            current_time = datetime.datetime.now(datetime.timezone.utc)
+            # Wait for the next sample based on the sampling interval
+            if last_sample_time is not None:
+                elapsed_time = (datetime.datetime.now(datetime.timezone.utc) - last_sample_time).total_seconds()
+                remaining_time = sampling_interval - elapsed_time
+                if remaining_time > 0:
+                    time.sleep(remaining_time)
 
-            # Read voltage from ADC
+            # Read the voltage value from the ADC
+            current_time = datetime.datetime.now(datetime.timezone.utc)
             ecg_value = ecg_channel.voltage
+
+            last_sample_time = current_time
 
             # Create a data point
             data_point = {
@@ -251,14 +264,13 @@ def record_ecg():
             # Put the data point into the queue
             ecg_data_queue.put(data_point)
 
-            # Sleep until next sample
-            time.sleep(sampling_interval)
         except Exception as e:
             error_message = f"Error reading ECG data: {e}"
             print(error_message)
             error_event.set()
             recording_event.clear()
             break
+
 
 @app.route('/')
 def index():
@@ -294,7 +306,8 @@ def start():
     ecg_influxdb_thread.start()
     audio_processing_thread.start()
 
-    threads.extend([audio_thread, oximeter_thread, influxdb_thread, ecg_thread, ecg_influxdb_thread, audio_processing_thread])  # Add threads to the list
+    threads.extend([audio_thread, oximeter_thread, influxdb_thread, ecg_thread, ecg_influxdb_thread,
+                    audio_processing_thread])  # Add threads to the list
     return render_template('/Stop.html')
 
 
@@ -341,4 +354,4 @@ def error():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0')
+    app.run(host='0.0.0.0', port=5000)
