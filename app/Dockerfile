@@ -22,5 +22,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code into the container
 COPY . .
 
-# Define the command to run the application
-CMD ["python", "app.py"]
+# Expose the port (optional but good practice)
+EXPOSE 5000
+
+# Define the command to run the application using Gunicorn
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
