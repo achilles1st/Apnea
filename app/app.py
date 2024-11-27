@@ -20,8 +20,55 @@ import busio
 import adafruit_ads1x15.ads1115 as ADS
 from adafruit_ads1x15.analog_in import AnalogIn
 from adafruit_ads1x15.ads1x15 import Mode
+import logging
+from logging.handlers import RotatingFileHandler
 
 app = Flask(__name__)
+
+# Configure Logging
+def setup_logging():
+    log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+
+    # Create log directory if it doesn't exist
+    log_directory = 'logs'
+    if not os.path.exists(log_directory):
+        os.makedirs(log_directory)
+
+    # Formatter for logs
+    formatter = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    # Console Handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # File Handler with Rotation
+    file_handler = RotatingFileHandler(
+        os.path.join(log_directory, 'app.log'),
+        maxBytes=20*1024*1024,  # 20 MB
+        backupCount=5
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    # Suppress overly verbose logs from third-party libraries
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
+    logging.getLogger('influxdb_client').setLevel(logging.WARNING)
+    logging.getLogger('sounddevice').setLevel(logging.WARNING)
+    logging.getLogger('adafruit_ads1x15').setLevel(logging.WARNING)
+
+# Initialize logging
+setup_logging()
+
+# logger for this module
+logger = logging.getLogger(__name__)
 
 recording_event = threading.Event()  # Event to signal when to stop recording
 threads = []  # List to track active threads
@@ -71,6 +118,7 @@ snoring_detector = SnoringDetector()
 def write_oxy_to_influxdb():
     global error_message
     batch_points = []
+    logger.info("Starting write_oxy_to_influxdb thread.")
     while recording_event.is_set() or not data_queue.empty():
         try:
             datapoint = data_queue.get(timeout=1)  # Wait for data
@@ -91,7 +139,7 @@ def write_oxy_to_influxdb():
             continue
         except Exception as e:
             error_message = f"Error writing to InfluxDB: {e}"
-            print(error_message)
+            logger.error(error_message, exc_info=True)
             error_event.set()
             recording_event.clear()
             break
@@ -99,11 +147,15 @@ def write_oxy_to_influxdb():
     # Write any remaining points
     if batch_points:
         write_api.write(bucket=PULSEOXY_BUCKET, org=INFLUXDB_ORG, record=batch_points)
+        logger.debug(f"Wrote remaining {len(batch_points)} pulse oximeter points to InfluxDB.")
+
+    logger.info("write_oxy_to_influxdb thread has stopped.")
 
 
 def write_ecg_to_influxdb():
     global error_message
     batch_points = []
+    logger.info("Starting write_ecg_to_influxdb thread.")
     while recording_event.is_set() or not ecg_data_queue.empty():
         try:
             data_point = ecg_data_queue.get(timeout=1)  # Wait for data
@@ -122,7 +174,7 @@ def write_ecg_to_influxdb():
             continue
         except Exception as e:
             error_message = f"Error writing ECG data to InfluxDB: {e}"
-            print(error_message)
+            logger.error(error_message, exc_info=True)
             error_event.set()
             recording_event.clear()
             break
@@ -134,6 +186,7 @@ def write_ecg_to_influxdb():
 
 def process_audio_segments():
     global error_message
+    logger.info("Starting audio processing thread.")
     while recording_event.is_set() or not audio_queue.empty():
         try:
             segment = audio_queue.get(timeout=1)  # Wait for audio segment
@@ -143,21 +196,26 @@ def process_audio_segments():
             continue
         except Exception as e:
             error_message = f"Error processing audio segment: {e}"
-            print(error_message)
+            logger.error(error_message, exc_info=True)
             error_event.set()
             recording_event.clear()
             break
+
+    logger.info("process_audio_segments thread has stopped.")
+
 
 
 def record_audio():
     global error_message
     try:
+        logger.info("Starting audio recording thread.")
         # Initialize buffer for audio segments
         buffer = np.array([], dtype=np.int16)
         segment_size = sample_rate * snoring_detector.SEGMENT_DURATION  # Number of samples per segment
 
         # Start the stream using sounddevice with specified device index
         with sd.InputStream(device=device_index, channels=channels, samplerate=sample_rate, dtype='int16') as stream:
+            logger.debug("Audio stream opened successfully.")
             while recording_event.is_set():
                 indata, _ = stream.read(1024)  # Read 1024 frames
                 if indata.size > 0:
@@ -180,23 +238,28 @@ def record_audio():
             else:
                 segment = buffer.astype(np.float32) / 32768.0
             audio_queue.put(segment)
+            logger.debug("Queued final audio segment.")
 
     except Exception as e:
         error_message = f"Error recording audio: {e}"
-        print(error_message)
+        logger.error(error_message, exc_info=True)
         error_event.set()
         recording_event.clear()
+    finally:
+        logger.info("record_audio thread has stopped.")
 
 
 def record_oximeter():
     global error_message
 
     try:
+        logger.info("Starting oximeter recording thread.")
         port = list_ports.comports()[0].device  # Select the first available serial port
         oximeter = CMS50Dplus(port)
+        logger.debug(f"Oximeter initialized on port {port}.")
     except Exception as e:
         error_message = f"Error initializing oximeter: {e}"
-        print(error_message)
+        logger.error(error_message, exc_info=True)
         error_event.set()
         recording_event.clear()
         return
@@ -211,17 +274,22 @@ def record_oximeter():
 
                 # Put the datapoint into the queue
                 data_queue.put(datapoint)
+
         except Exception as e:
             error_message = f"Error reading data from oximeter: {e}"
-            print(error_message)
+            logger.error(error_message, exc_info=True)
             error_event.set()
             recording_event.clear()
             break
+
+    logger.info("record_oximeter thread has stopped.")
+
 
 
 def record_ecg():
     global error_message, intervals
     try:
+        logger.info("Starting ECG recording thread.")
         from adafruit_ads1x15.ads1x15 import Mode
         # Initialize I2C bus and ADS1115 ADC
         i2c = busio.I2C(board.SCL, board.SDA)
@@ -230,9 +298,10 @@ def record_ecg():
         ads.data_rate = 128  # 128 samples per second
         ads.mode = Mode.CONTINUOUS  # Set continuous conversion mode
         ecg_channel = AnalogIn(ads, ADS.P0)
+        logger.debug("ECG sensor initialized successfully.")
     except Exception as e:
         error_message = f"Error initializing ECG sensor: {e}"
-        print(error_message)
+        logger.error(error_message, exc_info=True)
         error_event.set()
         recording_event.clear()
         return
@@ -266,15 +335,18 @@ def record_ecg():
 
         except Exception as e:
             error_message = f"Error reading ECG data: {e}"
-            print(error_message)
+            logger.error(error_message, exc_info=True)
             error_event.set()
             recording_event.clear()
             break
+
+    logger.info("record_ecg thread has stopped.")
 
 
 @app.route('/')
 def index():
     global error_message
+    logger.info("Accessed the index page.")
     error_event.clear()  # Reset the error event
     error_message = ""  # Reset the error message
     return render_template('/Start.html')
@@ -284,20 +356,22 @@ def index():
 def start():
     global user_name, error_message
 
+    logger.info("Received request to start recording.")
     error_event.clear()  # Reset the error event
     error_message = ""  # Reset the error message
 
     user_name = request.form.get('user_name')  # Get the username from the form
+    logger.debug(f"Recording started for user: {user_name}")
 
     recording_event.set()  # Set the recording event to start
 
     # Initialize and start threads
-    audio_thread = threading.Thread(target=record_audio, daemon=True)
-    oximeter_thread = threading.Thread(target=record_oximeter, daemon=True)
-    influxdb_thread = threading.Thread(target=write_oxy_to_influxdb, daemon=True)
-    ecg_thread = threading.Thread(target=record_ecg, daemon=True)
-    ecg_influxdb_thread = threading.Thread(target=write_ecg_to_influxdb, daemon=True)
-    audio_processing_thread = threading.Thread(target=process_audio_segments, daemon=True)
+    audio_thread = threading.Thread(target=record_audio, daemon=True, name='AudioThread')
+    oximeter_thread = threading.Thread(target=record_oximeter, daemon=True, name='OximeterThread')
+    influxdb_thread = threading.Thread(target=write_oxy_to_influxdb, daemon=True, name='InfluxdbWriteThread')
+    ecg_thread = threading.Thread(target=record_ecg, daemon=True, name='ECGThread')
+    ecg_influxdb_thread = threading.Thread(target=write_ecg_to_influxdb, daemon=True, name='ECGInfluxdbWriteThread')
+    audio_processing_thread = threading.Thread(target=process_audio_segments, daemon=True, name='AudioProcessingThread')
 
     audio_thread.start()
     oximeter_thread.start()
@@ -308,6 +382,8 @@ def start():
 
     threads.extend([audio_thread, oximeter_thread, influxdb_thread, ecg_thread, ecg_influxdb_thread,
                     audio_processing_thread])  # Add threads to the list
+    logger.info("All recording threads have been started.")
+
     return render_template('/Stop.html')
 
 
@@ -315,26 +391,36 @@ def start():
 def stop():
     global user_name, error_event, error_message
 
+    logger.info("Received request to stop recording.")
     recording_event.clear()  # Signal threads to stop
-    data_queue.join()  # Wait until all pulse oximeter data has been processed
-    ecg_data_queue.join()  # Wait until all ECG data has been processed
-    audio_queue.join()  # Wait until all audio segments have been processed
-    write_api.flush()  # Flush any remaining data to InfluxDB
+    logger.debug("Signaled all threads to stop.")
+
+    try:
+        data_queue.join()        # Wait until all pulse oximeter data has been processed
+        ecg_data_queue.join()    # Wait until all ECG data has been processed
+        audio_queue.join()       # Wait until all audio segments have been processed
+        write_api.flush()        # Flush any remaining data to InfluxDB
+        logger.debug("All queues have been joined and InfluxDB has been flushed.")
+    except Exception as e:
+        logger.error(f"Error during stopping process: {e}", exc_info=True)
 
     # Wait for threads to finish
     for thread in threads:
+        logger.debug(f"Waiting for thread {thread.name} to finish.")
         thread.join()
+        logger.debug(f"Thread {thread.name} has finished.")
 
     threads.clear()  # Clear the list of threads
+    logger.info("All recording threads have been stopped and cleared.")
 
     # Close SnoringDetector's InfluxDB client
     snoring_detector.close()
+    logger.debug("SnoringDetector's InfluxDB client has been closed.")
 
     # Reset the error event and message for future recordings
     error_event.clear()
     error_message = ""
-
-    # No need to process recordings since we're handling them in real-time
+    logger.info("Recording state has been reset.")
 
     return render_template('/Start.html')
 
@@ -342,6 +428,7 @@ def stop():
 @app.route('/check_error')
 def check_error():
     if error_event.is_set():
+        logger.warning(f"Error detected: {error_message}")
         return {'error': True, 'message': error_message}
     else:
         return {'error': False}
@@ -350,8 +437,10 @@ def check_error():
 @app.route('/error')
 def error():
     global error_message
+    logger.info("Accessed the error page.")
     return render_template('error.html', error_message=error_message)
 
 
 if __name__ == '__main__':
+    logger.info("Starting Flask application.")
     app.run(host='0.0.0.0', port=5000)
