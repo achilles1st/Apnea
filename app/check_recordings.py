@@ -1,4 +1,5 @@
 import tensorflow as tf
+import keras
 import numpy as np
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import ASYNCHRONOUS, WriteOptions
@@ -9,7 +10,7 @@ import configparser
 class SnoringDetector:
     def __init__(self):
         # Constants
-        self.MODEL_PATH = '/app/model/cnn_new_big_data_deviation_44k.keras'  # Path of the model
+        self.MODEL_PATH = '/app/model/cnn_latest_44k.keras'  # Path of the model
         self.THRESHOLD = 0.5  # Probability threshold for snoring classification
         self.SAMPLE_RATE = 44100  # Expected sample rate of audio
         self.SEGMENT_DURATION = 1  # Duration of each audio segment in seconds
@@ -42,7 +43,7 @@ class SnoringDetector:
         ))
 
         # Load the trained model
-        self.model = tf.keras.models.load_model(self.MODEL_PATH)
+        self.model = keras.models.load_model(self.MODEL_PATH)
 
     def get_log_mel(self, waveform, sample_rate):
         frame_length = int(0.032 * sample_rate)  # Approximately 32ms
