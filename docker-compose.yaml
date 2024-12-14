@@ -34,16 +34,16 @@ services:
     depends_on:
       - influxdb
     devices:
-      - "/dev/snd:/dev/snd"  # Map the ALSA sound devices from host to container
-    privileged: true         # Allow full access to host hardware
+      - "/dev/snd:/dev/snd"
+    privileged: true
     volumes:
-      - /mnt/recordings:/data/recordings  # Mount the SSD directory to the container
+      - /mnt/recordings:/data/recordings
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
     environment:
-      - FLASK_ENV=production  # Set Flask environment to production
+      - FLASK_ENV=production
+      - DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
     restart: always
 
 volumes:
   influxdb_data: {}
   grafana_data: {}
-
-
