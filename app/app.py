@@ -22,6 +22,8 @@ from adafruit_ads1x15.analog_in import AnalogIn
 from adafruit_ads1x15.ads1x15 import Mode
 import logging
 from logging.handlers import RotatingFileHandler
+import asyncio
+from bleak import BleakScanner, BleakClient
 
 app = Flask(__name__)
 
@@ -70,6 +72,9 @@ setup_logging()
 # logger for this module
 logger = logging.getLogger(__name__)
 
+ble_connected_event = threading.Event()
+ble_active = False
+
 recording_event = threading.Event()  # Event to signal when to stop recording
 threads = []  # List to track active threads
 
@@ -88,6 +93,7 @@ INFLUXDB_ORG = config['INFLUXDB']['ORG']
 INFLUXDB_BUCKET = config['INFLUXDB']['AUDIO_BUCKET']
 ECG_BUCKET = config['INFLUXDB']['ECG_BUCKET']
 PULSEOXY_BUCKET = config['INFLUXDB']['PULSEOXY_BUCKET']
+RESPIRATORY_BUCKET = config['INFLUXDB']['RESPIRATORY_BUCKET']
 
 # Initialize InfluxDB client
 client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
@@ -105,6 +111,7 @@ write_api = client.write_api(write_options=WriteOptions(
 data_queue = Queue(maxsize=10000)  # For pulse oximeter data
 ecg_data_queue = Queue(maxsize=10000)  # For ECG data
 audio_queue = Queue(maxsize=10000)  # For audio segments
+respiratory_data_queue = Queue(maxsize=10000)
 
 user_name = ""  # Global variable to store the username
 
@@ -114,9 +121,16 @@ error_message = ""
 # Initialize SnoringDetector
 snoring_detector = SnoringDetector()
 
+# Define the UUID for the BLE characteristic
+RESP_BELT_CHAR_UUID = "4fafc202-1fb5-459e-8fcc-c5c9c331914b"
+BLE_DEVICE_NAME = "ESP32_BLE"  # Adjust this to match your device name
+DATA_BATCH_SIZE = 60  # Adjust batch size for writing to InfluxDB as needed
 
 def write_oxy_to_influxdb():
     global error_message
+
+    if ble_active:
+        ble_connected_event.wait()  # Wait until BLE is connected
     batch_points = []
     logger.info("Starting write_oxy_to_influxdb thread.")
     while recording_event.is_set() or not data_queue.empty():
@@ -154,6 +168,9 @@ def write_oxy_to_influxdb():
 
 def write_ecg_to_influxdb():
     global error_message
+
+    if ble_active:
+        ble_connected_event.wait()  # Wait until BLE is connected
     batch_points = []
     logger.info("Starting write_ecg_to_influxdb thread.")
     while recording_event.is_set() or not ecg_data_queue.empty():
@@ -184,8 +201,118 @@ def write_ecg_to_influxdb():
         write_api.write(bucket=ECG_BUCKET, org=INFLUXDB_ORG, record=batch_points)
 
 
+def notification_handler(sender, data):
+    global user_name
+    # Decode data (assuming the data is simple text; adjust parsing as needed)
+    # decoded_data = data.decode('utf-8', errors='ignore').strip()
+    decoded_data = data.decode()
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+    decoded_data = decoded_data.split(":")[1].strip()
+    #resp_value = float(decoded_data) if decoded_data.isnumeric() else None
+    resp_value = float(decoded_data)
+
+    data_point = {
+        'time': timestamp,
+        'resp_value': resp_value
+    }
+
+    # Put data into the queue
+    #respiratory_data_queue.put_nowait(data_point)
+    respiratory_data_queue.put(data_point)
+
+async def ble_run():
+    global error_message
+
+    devices = await BleakScanner.discover()
+    target_device = None
+    for device in devices:
+        if device.name == BLE_DEVICE_NAME:
+            target_device = device
+            break
+
+    if not target_device:
+        error_message = f"Could not find device {BLE_DEVICE_NAME}"
+        logger.error(error_message)
+        error_event.set()
+        recording_event.clear()
+        return
+
+    logger.info(f"Found device: {target_device.name} [{target_device.address}]")
+
+    try:
+        async with BleakClient(target_device.address) as client:
+            logger.info("Connected to BLE device.")
+            if not client.is_connected:
+                raise ConnectionError("Failed to establish BLE connection.")
+
+            await client.start_notify(RESP_BELT_CHAR_UUID, notification_handler)
+            logger.info("Started receiving respiratory belt notifications.")
+            # Signal that BLE is connected
+            ble_connected_event.set()
+            try:
+                while recording_event.is_set():
+                    await asyncio.sleep(1)  # Keeps the connection alive
+            except asyncio.CancelledError:
+                print("Notification loop cancelled.")
+
+    except asyncio.TimeoutError:
+        error_message = "BLE connection attempt timed out."
+        logger.error(error_message, exc_info=True)
+        error_event.set()
+        recording_event.clear()
+    except Exception as e:
+        error_message = f"Unexpected error during BLE operation: {e}"
+        logger.error(error_message, exc_info=True)
+        error_event.set()
+        recording_event.clear()
+
+def run_ble_loop():
+    # Runs BLE asyncio code in a thread
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(ble_run())
+
+
+def write_respiratory_to_influxdb():
+    global error_message
+
+    if ble_active:
+        ble_connected_event.wait()  # Wait until BLE is connected
+    batch_points = []
+    logger.info("Starting write_respiratory_to_influxdb thread.")
+    while recording_event.is_set() or not respiratory_data_queue.empty():
+        try:
+            data_point = respiratory_data_queue.get(timeout=1)
+            point = Point("resp_belt_samples") \
+                .tag("user_name", user_name) \
+                .field("resp_value", data_point['resp_value']) \
+                .time(int(data_point['time'].timestamp() * 1e9), WritePrecision.NS)
+            batch_points.append(point)
+            respiratory_data_queue.task_done()
+
+            if len(batch_points) >= DATA_BATCH_SIZE:
+                write_api.write(bucket=RESPIRATORY_BUCKET, org=INFLUXDB_ORG, record=batch_points)
+                batch_points = []
+        except Empty:
+            continue
+        except Exception as e:
+            error_message = f"Error writing respiratory data to InfluxDB: {e}"
+            logger.error(error_message, exc_info=True)
+            error_event.set()
+            recording_event.clear()
+            break
+
+    # Write remaining points
+    if batch_points:
+        write_api.write(bucket=RESPIRATORY_BUCKET, org=INFLUXDB_ORG, record=batch_points)
+
+    logger.info("write_respiratory_to_influxdb thread has stopped.")
+
+
 def process_audio_segments():
     global error_message
+
+    if ble_active:
+        ble_connected_event.wait()  # Wait until BLE is connected
     logger.info("Starting audio processing thread.")
     while recording_event.is_set() or not audio_queue.empty():
         try:
@@ -208,6 +335,8 @@ def process_audio_segments():
 def record_audio():
     global error_message
     try:
+        if ble_active:
+            ble_connected_event.wait()  # Wait until BLE is connected
         logger.info("Starting audio recording thread.")
         # Initialize buffer for audio segments
         buffer = np.array([], dtype=np.int16)
@@ -253,6 +382,8 @@ def record_oximeter():
     global error_message
 
     try:
+        if ble_active:
+            ble_connected_event.wait()  # Wait until BLE is connected
         logger.info("Starting oximeter recording thread.")
         port = list_ports.comports()[0].device  # Select the first available serial port
         oximeter = CMS50Dplus(port)
@@ -289,8 +420,9 @@ def record_oximeter():
 def record_ecg():
     global error_message, intervals
     try:
+        if ble_active:
+            ble_connected_event.wait()  # Wait until BLE is connected
         logger.info("Starting ECG recording thread.")
-        from adafruit_ads1x15.ads1x15 import Mode
         # Initialize I2C bus and ADS1115 ADC
         i2c = busio.I2C(board.SCL, board.SDA)
         ads = ADS.ADS1115(i2c)
@@ -354,52 +486,84 @@ def index():
 
 @app.route('/start', methods=['POST'])
 def start():
-    global user_name, error_message
+    global user_name, error_message, ble_active
 
     logger.info("Received request to start recording.")
     error_event.clear()  # Reset the error event
     error_message = ""  # Reset the error message
+    ble_connected_event.clear()  # Reset the BLE connection event
 
     user_name = request.form.get('user_name')  # Get the username from the form
-    logger.debug(f"Recording started for user: {user_name}")
+    selected_sensors = request.form.getlist('sensors')  # Get selected sensors as a list
+    logger.debug(f"Recording started for user: {user_name} with sensors: {selected_sensors}")
 
     recording_event.set()  # Set the recording event to start
 
-    # Initialize and start threads
-    audio_thread = threading.Thread(target=record_audio, daemon=True, name='AudioThread')
-    oximeter_thread = threading.Thread(target=record_oximeter, daemon=True, name='OximeterThread')
-    influxdb_thread = threading.Thread(target=write_oxy_to_influxdb, daemon=True, name='InfluxdbWriteThread')
-    ecg_thread = threading.Thread(target=record_ecg, daemon=True, name='ECGThread')
-    ecg_influxdb_thread = threading.Thread(target=write_ecg_to_influxdb, daemon=True, name='ECGInfluxdbWriteThread')
-    audio_processing_thread = threading.Thread(target=process_audio_segments, daemon=True, name='AudioProcessingThread')
+    # Initialize and start threads based on selected sensors
+    sensor_threads = []
 
-    audio_thread.start()
-    oximeter_thread.start()
-    influxdb_thread.start()
-    ecg_thread.start()
-    ecg_influxdb_thread.start()
-    audio_processing_thread.start()
+    if 'respiration' in selected_sensors:
+        ble_active = True
+        resp_influxdb_thread = threading.Thread(target=write_respiratory_to_influxdb, daemon=True, name='RespInfluxdbWriteThread')
+        ble_thread = threading.Thread(target=run_ble_loop, daemon=True, name='BLEThread')
+        sensor_threads.append(resp_influxdb_thread)
+        sensor_threads.append(ble_thread)
+        resp_influxdb_thread.start()
+        ble_thread.start()
 
-    threads.extend([audio_thread, oximeter_thread, influxdb_thread, ecg_thread, ecg_influxdb_thread,
-                    audio_processing_thread])  # Add threads to the list
-    logger.info("All recording threads have been started.")
+    if 'snoring' in selected_sensors:
+        audio_thread = threading.Thread(target=record_audio, daemon=True, name='AudioThread')
+        audio_processing_thread = threading.Thread(target=process_audio_segments, daemon=True, name='AudioProcessingThread')
+        sensor_threads.append(audio_thread)
+        sensor_threads.append(audio_processing_thread)
+        audio_thread.start()
+        audio_processing_thread.start()
+
+    if 'oximeter' in selected_sensors:
+        oximeter_thread = threading.Thread(target=record_oximeter, daemon=True, name='OximeterThread')
+        influxdb_thread = threading.Thread(target=write_oxy_to_influxdb, daemon=True, name='OxygenInfluxdbWriteThread')
+        sensor_threads.append(oximeter_thread)
+        sensor_threads.append(influxdb_thread)
+        oximeter_thread.start()
+        influxdb_thread.start()
+
+    if 'ecg' in selected_sensors:
+        ecg_thread = threading.Thread(target=record_ecg, daemon=True, name='ECGThread')
+        ecg_influxdb_thread = threading.Thread(target=write_ecg_to_influxdb, daemon=True, name='ECGInfluxdbWriteThread')
+        sensor_threads.append(ecg_thread)
+        sensor_threads.append(ecg_influxdb_thread)
+        ecg_thread.start()
+        ecg_influxdb_thread.start()
+
+    if not selected_sensors:
+        error_message = "No sensors selected. Please select at least one sensor."
+        logger.error(error_message)
+        return render_template('error.html', error_message=error_message)
+
+    threads.extend(sensor_threads)
+
+    logger.info(f"Selected sensor threads have started: {selected_sensors}")
 
     return render_template('/Stop.html')
 
 
 @app.route('/stop', methods=['POST'])
 def stop():
-    global user_name, error_event, error_message
+    global user_name, error_event, error_message, ble_active
 
     logger.info("Received request to stop recording.")
     recording_event.clear()  # Signal threads to stop
-    logger.debug("Signaled all threads to stop.")
+    ble_connected_event.set()  # Unblock any threads waiting on BLE connection
+    ble_active = False  # Reset BLE active flag
+    logger.debug("Signaled all threads to stop and unblocked BLE event.")
 
+    # Wait until all data has been processed
     try:
-        data_queue.join()        # Wait until all pulse oximeter data has been processed
-        ecg_data_queue.join()    # Wait until all ECG data has been processed
-        audio_queue.join()       # Wait until all audio segments have been processed
-        write_api.flush()        # Flush any remaining data to InfluxDB
+        data_queue.join()
+        ecg_data_queue.join()
+        audio_queue.join()
+        respiratory_data_queue.join()
+        write_api.flush()
         logger.debug("All queues have been joined and InfluxDB has been flushed.")
     except Exception as e:
         logger.error(f"Error during stopping process: {e}", exc_info=True)
