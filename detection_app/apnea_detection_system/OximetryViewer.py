@@ -53,9 +53,13 @@ class OximetryViewer(QtWidgets.QMainWindow):
         # Main layout
         main_layout = QtWidgets.QVBoxLayout(central_widget)
 
-        # Create the apnea_detection_system plot
-        self.pr_plot_widget = pg.PlotWidget(title="apnea_detection_system Over Time")
-        self.pr_plot_widget.setLabel('left', "apnea_detection_system", units='bpm')
+        # Create the sensor plot
+        if self.field == "spO2":
+            unit = "%"
+        else:
+            unit = "bpm"
+        self.pr_plot_widget = pg.PlotWidget(title=f"{self.field} Over Time")
+        self.pr_plot_widget.setLabel('left', f"{self.field}", units=unit)
         self.pr_plot_widget.setLabel('bottom', "Time", units='s')
 
         # Plot pulse rate data
@@ -138,15 +142,15 @@ def main():
     org = "TU"
     bucket = "Pulseoxy"
     measurement = "pulseoxy_samples"
-    field = "PulseRate"
+    sensor_field = "spO2"   # select between: spO2, PulseRate
 
-    # Create detector with 60 Hz data and a 5-minute rolling window
-    detector = PulseOxiDetector(url, token, org, field, fs=60, baseline_window_minutes=10)
-    df_pr = detector.get_data(bucket, measurement, source='influx')
-    df_pf_baseline = detector.compute_rolling_baseline(df_pr, min_periods_minutes=5)
+    # Create detector with a 10-minute rolling window
+    detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=60)
+    df_pr = detector.get_data(bucket, measurement, source='local')
+    df_pf_baseline = detector.compute_rolling_baseline(df_pr, min_periods_minutes=30)
     apnea_events = detector.detect_apnea_events(df_pf_baseline)
 
-    pr_data = df_pr["PulseRate"].values
+    pr_data = df_pr[f"{sensor_field}"].values
     baselines = df_pf_baseline["baseline"].values
     t = df_pr["time"].values  # numpy array of datetime64 objects
 

@@ -1,6 +1,7 @@
 import pandas as pd
 from influxdb_client import InfluxDBClient
 from datetime import timedelta
+import warnings
 
 
 class Helper:
@@ -60,7 +61,7 @@ class Helper:
                     return df
 
             except Exception as e:
-                print(f"Error in get_data: {e}")
+                warnings.warn(f"Error in get_data: {e}\n Reading data from {self.field}_last_session.csv", RuntimeWarning)
                 print("Reading data from PulseRate_last_session.csv")
                 df = pd.read_csv(f'{self.field}_last_session.csv')
                 df['time'] = pd.to_datetime(df['time'], format="mixed")
@@ -71,7 +72,7 @@ class Helper:
 
         elif source == 'local':
             print("Reading data from PulseRate_last_session.csv")
-            df = pd.read_csv('PulseRate_last_session.csv')
+            df = pd.read_csv(f'{self.field}_last_session.csv')
             df['time'] = pd.to_datetime(df['time'], format="mixed")
             df = df.sort_values('time').reset_index(drop=True)
             return df

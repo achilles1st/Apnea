@@ -1,6 +1,9 @@
 import pandas as pd
 from Helper import Helper
 from tqdm import tqdm
+from influxdb_client import InfluxDBClient, Point, WriteOptions
+from influxdb_client.domain.write_precision import WritePrecision
+from influxdb_client.client.write_api import ASYNCHRONOUS
 
 
 class PulseOxiDetector(Helper):
@@ -12,8 +15,8 @@ class PulseOxiDetector(Helper):
         if self.field == 'PulseRate':
             self.event_start_threshold_function = lambda baseline, std: baseline - (2 * std)
             self.event_end_threshold_function = lambda baseline, std: baseline
-        elif self.field == 'SpO2':
-            self.event_start_threshold_function = lambda baseline, std: baseline - (1 * std)
+        elif self.field == 'spO2':
+            self.event_start_threshold_function = lambda baseline, std: baseline - (1.5 * std)
             self.event_end_threshold_function = lambda baseline, std: baseline
         else:
             raise ValueError(f"Unknown field: {field}")
@@ -81,6 +84,39 @@ class PulseOxiDetector(Helper):
 
         return events
 
+    def upload_apnea_events(self, events, measurement_name, user_name):
+        client = InfluxDBClient(url=url, token=token, org=org)
+        write_api = client.write_api(write_options=WriteOptions(
+            write_type=ASYNCHRONOUS,
+            batch_size=1000,
+            flush_interval=1000,
+            jitter_interval=0,
+            retry_interval=5000,
+            max_retries=3,
+            max_retry_delay=30000,
+            exponential_base=2
+        ))
+
+        points = []
+        for start, stop in events:
+            start_point = Point(f"{measurement_name}") \
+                .tag("user_name", f"{user_name}") \
+                .field(f"start_{self.field}_event", int(1)) \
+                .time(int(start.timestamp() * 1e9), WritePrecision.NS)
+            points.append(start_point)
+            # Add a duration field or another marker for the stop time
+            stop_point = Point(f"{measurement_name}") \
+                .tag("user_name", f"{user_name}") \
+                .field(f"stop_{self.field}_event", int(0)) \
+                .time(int(stop.timestamp() * 1e9), WritePrecision.NS)
+            points.append(stop_point)
+
+        # Write points to InfluxDB
+        write_api.write(bucket=bucket, record=points)
+        print("Apnea events uploaded successfully.")
+
+        client.close()
+        write_api.flush()
 
 
 if __name__ == "__main__":
@@ -113,5 +149,8 @@ if __name__ == "__main__":
             print(event)
     else:
         print("No apnea events detected.")
+
+    # upload events
+    detector.upload_apnea_events(apnea_events, "pulseoxy_samples", "Stefan")
 
 
