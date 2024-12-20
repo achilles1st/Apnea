@@ -1,15 +1,16 @@
 import sys
 from dataclasses import field
-
+from apnea_detection_system.Helper import Helper
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
-from pulse_oxi_detection import PulseOxiDetector
+from apnea_detection_system.pulse_oxi_detection import PulseOxiDetector
+from apnea_detection_system.Respiration_detection import CWTBasedApneaDetector
 import pandas as pd  # Ensure pandas is imported
 
 
-class OximetryViewer(QtWidgets.QMainWindow):
-    def __init__(self, field, times, values, apnea_events, baselines):
+class ApneaViewer(QtWidgets.QMainWindow):
+    def __init__(self, field, times, values, apnea_events, baselines=None):
         super().__init__()
         self.field = field
         self.setWindowTitle(f"{self.field}values with Apnea Detection")
@@ -66,7 +67,8 @@ class OximetryViewer(QtWidgets.QMainWindow):
         self.curve = self.pr_plot_widget.plot(self.times_in_seconds, self.values, pen='b', name="Pulse Rate")
 
         # Plot the baselines
-        self.baseline_curve = self.pr_plot_widget.plot(self.times_in_seconds, self.baselines, pen='g', name="Baseline")
+        if baselines is not None:
+            self.baseline_curve = self.pr_plot_widget.plot(self.times_in_seconds, self.baselines, pen='g', name="Baseline")
 
         # Highlight detected apnea events
         for event in self.events:
@@ -130,33 +132,47 @@ class OximetryViewer(QtWidgets.QMainWindow):
             # Update line position
             closest_time = self.times_in_seconds[idx]
             closest_pr = self.values[idx]
-            closest_baseline = self.baselines[idx]
             self.vline.setPos(closest_time)
+            if self.baselines is not None:
+                closest_baseline = self.baselines[idx]
+                self.text_item.setText(f"Time: {closest_time:.2f}s\n{self.field}: {closest_pr:.1f}bpm\nBaseline: {closest_baseline:.1f}%")
+            else:
+                self.text_item.setText(f"Time: {closest_time:.2f}s\n{self.field}: {closest_pr:.1f}")
 
-            self.text_item.setText(f"Time: {closest_time:.2f}s\n{self.field}: {closest_pr:.1f}bpm\nBaseline: {closest_baseline:.1f}%")
             self.text_item.setPos(closest_time, closest_pr)
 
 def main():
     url = "http://sleep-apnea:8086"
     token = "nFshsCSH5OyLFv9tSjPBIyOPvwXzJpt4zEAnm9OJFpVlEcUWOzSCAia3MRFrN-C8ljfQbKu6VgoRlTBQZoXTrg=="
     org = "TU"
-    bucket = "Pulseoxy"
-    measurement = "pulseoxy_samples"
-    sensor_field = "spO2"   # select between: spO2, PulseRate
 
-    # Create detector with a 10-minute rolling window
-    detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=60)
-    df_pr = detector.get_data(bucket, measurement, source='local')
-    df_pf_baseline = detector.compute_rolling_baseline(df_pr, min_periods_minutes=30)
-    apnea_events = detector.detect_apnea_events(df_pf_baseline)
+    bucket = "Respiratory"
+    measurement = "resp_belt_samples"
+    sensor_field = "resp_value"
 
-    pr_data = df_pr[f"{sensor_field}"].values
-    baselines = df_pf_baseline["baseline"].values
-    t = df_pr["time"].values  # numpy array of datetime64 objects
+    if sensor_field == "spO2" or sensor_field == "PulseRate":
+        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=30)
+        df = detector.get_data(bucket, measurement, source='local')
+        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=15)
+        apnea_events = detector.detect_apnea_events(df_pf_baseline)
+        baselines = df_pf_baseline["baseline"].values
+        data = df[f"{sensor_field}"].values
+        t = df["time"].values  # numpy array of datetime64 objects
+    elif sensor_field == "resp_value":
+        detector = CWTBasedApneaDetector(url, token, org, sensor_field, fs=10, min_duration=6)
+        df = detector.get_data(bucket, measurement, source='local')
+        data = df[f"{sensor_field}"].values
+        t = np.arange(len(data)) / 10
+        apnea_events = detector.detect_apnea_events(data)
+
+        baselines = None
+    else:
+        raise ValueError(f"Invalid sensor field: {sensor_field}")
+
 
     # Launch the GUI
     app = QtWidgets.QApplication(sys.argv)
-    viewer = OximetryViewer(field, t, pr_data, apnea_events, baselines)
+    viewer = ApneaViewer(sensor_field, t, data, apnea_events, baselines)
     viewer.show()
     sys.exit(app.exec())
 

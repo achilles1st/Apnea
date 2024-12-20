@@ -12,6 +12,25 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "influxdb",
+          "uid": "ddy7dxhm6hx4we"
+        },
+        "enable": true,
+        "filter": {
+          "exclude": false,
+          "ids": [
+            4
+          ]
+        },
+        "iconColor": "light-purple",
+        "name": "PulseRate_Events",
+        "target": {
+          "query": "from(bucket: \"Pulseoxy\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"pulseoxy_samples\" and\r\n    (r._field == \"start_pr_event\" or r._field == \"stop_pr_event\")\r\n  )\r\n  |> filter(fn: (r) => r._value == 1 or r._value == 0)\r\n  |> map(fn: (r) => ({\r\n    time: r._time,\r\n    title: if r._field == \"start_pr_event\" then \"Start Event\" else \"Stop Event\",\r\n    text: r._field\r\n  }))\r\n",
+          "refId": "Anno"
+        }
       }
     ]
   },
@@ -30,7 +49,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic-by-name"
+            "fixedColor": "dark-orange",
+            "mode": "fixed"
           },
           "custom": {
             "axisBorderShow": false,
@@ -108,7 +128,7 @@
             "type": "influxdb",
             "uid": "ddy7dxhm6hx4we"
           },
-          "query": "from(bucket: \"Pulseoxy\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"pulseoxy_samples\" and\r\n    r._field == \"PulseRate\"\r\n  )\r\n",
+          "query": "from(bucket: \"Pulseoxy\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"pulseoxy_samples\" and\r\n    r._field == \"PulseRate\"\r\n  )\r\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\r\n  |> yield(name: \"mean_PulseRate\")\r\n  ",
           "refId": "A"
         }
       ],
@@ -124,7 +144,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-GrYlRd"
+            "fixedColor": "dark-green",
+            "mode": "fixed"
           },
           "custom": {
             "axisBorderShow": false,
@@ -201,7 +222,7 @@
             "type": "influxdb",
             "uid": "ddy7dxhm6hx4we"
           },
-          "query": "from(bucket: \"Pulseoxy\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"pulseoxy_samples\" and\r\n    r._field == \"spO2\"\r\n  )\r\n",
+          "query": "from(bucket: \"Pulseoxy\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"pulseoxy_samples\" and\r\n    r._field == \"spO2\"\r\n  )\r\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\r\n  |> yield(name: \"mean_spO2\")\r\n",
           "refId": "A"
         }
       ],
@@ -217,7 +238,102 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "fixedColor": "dark-blue",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "influxdb",
+            "uid": "ddy7dxhm6hx4we"
+          },
+          "query": "from(bucket: \"Respiratory\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"resp_belt_samples\" and\r\n    r._field == \"resp_value\"\r\n  )\r\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\r\n  |> yield(name: \"mean_respiration\")",
+          "refId": "A"
+        }
+      ],
+      "title": "Respiration",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "default": true,
+        "type": "influxdb",
+        "uid": "ddy7dxhm6hx4we"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "dark-red",
+            "mode": "fixed"
           },
           "custom": {
             "axisBorderShow": false,
@@ -273,7 +389,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 16
       },
       "id": 5,
       "options": {
@@ -294,7 +410,7 @@
             "type": "influxdb",
             "uid": "ddy7dxhm6hx4we"
           },
-          "query": "from(bucket: \"ECG\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"ecg_samples\" and\r\n    r._field == \"ecg_value\"\r\n  )\r\n",
+          "query": "from(bucket: \"ECG\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"ecg_samples\" and\r\n    r._field == \"ecg_value\"\r\n  )\r\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\r\n  |> yield(name: \"mean_ECG\")",
           "refId": "A"
         }
       ],
@@ -310,7 +426,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-GrYlRd"
+            "fixedColor": "dark-purple",
+            "mode": "fixed"
           },
           "custom": {
             "axisBorderShow": false,
@@ -366,7 +483,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 17
+        "y": 25
       },
       "id": 2,
       "options": {
@@ -387,7 +504,7 @@
             "type": "influxdb",
             "uid": "ddy7dxhm6hx4we"
           },
-          "query": "from(bucket: \"Pulseoxy\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"pulseoxy_samples\" and\r\n    r._field == \"PulseWave\"\r\n  )\r\n",
+          "query": "from(bucket: \"Pulseoxy\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"pulseoxy_samples\" and\r\n    r._field == \"PulseWave\"\r\n  )\r\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\r\n  |> yield(name: \"mean_PulseWave\")",
           "refId": "A"
         }
       ],
@@ -417,8 +534,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -433,7 +549,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 25
+        "y": 33
       },
       "id": 6,
       "options": {
@@ -461,72 +577,9 @@
       ],
       "title": "snoring events",
       "type": "table"
-    },
-    {
-      "datasource": {
-        "default": true,
-        "type": "influxdb",
-        "uid": "ddy7dxhm6hx4we"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 25
-      },
-      "id": 7,
-      "options": {
-        "minVizHeight": 75,
-        "minVizWidth": 75,
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "sizing": "auto"
-      },
-      "pluginVersion": "11.2.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "influxdb",
-            "uid": "ddy7dxhm6hx4we"
-          },
-          "query": "from(bucket: \"audio\")\r\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\r\n  |> filter(fn: (r) =>\r\n    r._measurement == \"snoring_summary\" and\r\n    r._field == \"snoring_percentage\"\r\n  )",
-          "refId": "A"
-        }
-      ],
-      "title": "snoring percentage",
-      "type": "gauge"
     }
   ],
+  "refresh": "",
   "schemaVersion": 39,
   "tags": [],
   "templating": {
@@ -540,6 +593,6 @@
   "timezone": "browser",
   "title": "audio",
   "uid": "fdy7eak1zkf0gf",
-  "version": 9,
+  "version": 15,
   "weekStart": ""
 }

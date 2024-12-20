@@ -29,7 +29,7 @@ class CWTBasedApneaDetector(Helper):
                  wavelet_name='mexh',
                  scales=np.arange(5, 12),
                  threshold_scale=0.3,
-                 min_duration=8,
+                 min_duration=10,
                  fs=10.0):
         super().__init__(url, token, org, field, fs)
         self._wavelet_name = wavelet_name
@@ -68,6 +68,7 @@ class CWTBasedApneaDetector(Helper):
                 end_idx = signal_length
 
             window_signal = respiration_signal[start_idx:end_idx]
+            # TODO: delete this timevector and replace the below with the df of the app
             time = np.arange(start_idx, end_idx) / self._fs
 
             # Compute the Continuous Wavelet Transform for the window
@@ -83,6 +84,8 @@ class CWTBasedApneaDetector(Helper):
             line_stop = []
             previous_state = False
 
+            # TODO: replace time vector with the timestamps from application
+            # e.g. line_start = df.loc[i, 'time']
             for i in range(len(low_energy_mask)):
                 if low_energy_mask[i] and not previous_state:
                     line_start.append(time[i])
@@ -101,8 +104,9 @@ class CWTBasedApneaDetector(Helper):
             # Collect apnea events, adjusting time to the full signal
             apnea_events.extend([(start, stop) for start, stop in window_apnea_events])
 
+            # ONLY FOR DEBUGGING
             # uncomment to plot the signal with the power spectrum and detected events
-            self.plot_cwt(time, window_signal, window_apnea_events, coefficients, self._scales, respiration_energy, threshold)
+            #self.plot_cwt(time, window_signal, window_apnea_events, coefficients, self._scales, respiration_energy, threshold)
 
         # merge overlapping or adjacent events from the moving average filter
         merged_apnea_events = self._merge_events(apnea_events)
@@ -172,18 +176,18 @@ if __name__ == "__main__":
     url = "http://sleep-apnea:8086"
     token = "nFshsCSH5OyLFv9tSjPBIyOPvwXzJpt4zEAnm9OJFpVlEcUWOzSCAia3MRFrN-C8ljfQbKu6VgoRlTBQZoXTrg=="
     org = "TU"
-    bucket = "Pulseoxy"
-    measurement = "pulseoxy_samples"
-    field = "PulseRate"
+    bucket = "Respiratory"
+    measurement = "resp_belt_samples"
+    sensor_field = "resp_value"
 
     # Create detector with 60 Hz data and a 5-minute rolling window
-    detector = CWTBasedApneaDetector(url, token, org, field)
+    detector = CWTBasedApneaDetector(url, token, org, sensor_field)
 
     # Load the respiration data
-    df = pd.read_csv("moving_average_data.csv")
-    signal = df['moving_avg'].values
+    df = pd.read_csv("resp_value_last_session.csv")
+    signal = df[f'{sensor_field}'].values
     scales = np.arange(5, 12)  # Corresponding to frequencies between 0.2 and 0.5 Hz
-    time = np.arange(len(signal))/10
+    t = np.arange(len(signal))/10
     # Detect apnea events
     apnea_events = detector.detect_apnea_events(signal)
 
@@ -191,7 +195,7 @@ if __name__ == "__main__":
     fig, ax = plt.subplots(1, 1, figsize=(12, 10), sharex=True)
 
     # Plot the original signal
-    ax.plot(time, signal, 'k', label='Respiration Signal')
+    ax.plot(t, signal, 'k', label='Respiration Signal')
     ax.set_title('Respiration Signal with Line-Like Events')
     ax.set_ylabel('Amplitude')
 
