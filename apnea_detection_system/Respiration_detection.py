@@ -3,6 +3,8 @@ import pywt
 import matplotlib.pyplot as plt
 import pandas as pd
 from Helper import Helper
+import configparser
+from datetime import datetime
 
 
 class CWTBasedApneaDetector(Helper):
@@ -41,7 +43,7 @@ class CWTBasedApneaDetector(Helper):
         self._overlap = overlap
 
 
-    def detect_apnea_events(self, respiration_signal):
+    def detect_apnea_events(self, df):
         """
         Detect apnea events from a given respiration signal using CWT-based analysis.
 
@@ -54,6 +56,7 @@ class CWTBasedApneaDetector(Helper):
         apnea_events : list of tuples
             A list of apnea event intervals as (start_time, end_time) in seconds.
         """
+        respiration_signal = df[f'{self.field}'].values
         if not isinstance(respiration_signal, np.ndarray):
             respiration_signal = np.array(respiration_signal)
 
@@ -69,7 +72,7 @@ class CWTBasedApneaDetector(Helper):
 
             window_signal = respiration_signal[start_idx:end_idx]
             # TODO: delete this timevector and replace the below with the df of the app
-            time = np.arange(start_idx, end_idx) / self._fs
+            #time = np.arange(start_idx, end_idx) / self._fs
 
             # Compute the Continuous Wavelet Transform for the window
             coefficients, _ = pywt.cwt(window_signal, self._scales, self._wavelet_name)
@@ -88,18 +91,19 @@ class CWTBasedApneaDetector(Helper):
             # e.g. line_start = df.loc[i, 'time']
             for i in range(len(low_energy_mask)):
                 if low_energy_mask[i] and not previous_state:
-                    line_start.append(time[i])
+                    event_start_time = datetime.fromisoformat(str(df.loc[i, 'time']))
+                    line_start.append(event_start_time)
                 elif not low_energy_mask[i] and previous_state:
-                    line_stop.append(time[i])
+                    event_stop_time = datetime.fromisoformat(str(df.loc[i, 'time']))
+                    line_stop.append(event_stop_time)
                 previous_state = low_energy_mask[i]
 
-            # Handle the case where the window ends in a line-like state
             if previous_state:
-                line_stop.append(time[-1])
+                end = datetime.fromisoformat(str(df.loc[len(low_energy_mask) - 1, 'time']))
+                line_stop.append(end)
 
-            # Filter intervals to keep only those longer than the minimum duration
             window_apnea_events = [(start, stop) for start, stop in zip(line_start, line_stop)
-                                   if (stop - start) >= self._min_duration]
+                                   if (stop - start).total_seconds() >= self._min_duration]
 
             # Collect apnea events, adjusting time to the full signal
             apnea_events.extend([(start, stop) for start, stop in window_apnea_events])
@@ -171,14 +175,18 @@ class CWTBasedApneaDetector(Helper):
         plt.show()
 
 
-# EXAMPLE USAGE
+# EXAMPLE USAGE load from csv file
 if __name__ == "__main__":
-    url = "http://sleep-apnea:8086"
-    token = "nFshsCSH5OyLFv9tSjPBIyOPvwXzJpt4zEAnm9OJFpVlEcUWOzSCAia3MRFrN-C8ljfQbKu6VgoRlTBQZoXTrg=="
-    org = "TU"
-    bucket = "Respiratory"
-    measurement = "resp_belt_samples"
-    sensor_field = "resp_value"
+    # Read configuration
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
+    url = config['INFLUXDB']['URL']
+    token = config['INFLUXDB']['TOKEN']
+    org = config['INFLUXDB']['ORG']
+    bucket = config['BUCKETS']['PULSEOXY_BUCKET']
+    measurement = config['MEASUREMENTS']['Respiration_Measurements']
+    sensor_field = config['FIELDS']['Respiration']
 
     # Create detector with 60 Hz data and a 5-minute rolling window
     detector = CWTBasedApneaDetector(url, token, org, sensor_field)
@@ -187,9 +195,9 @@ if __name__ == "__main__":
     df = pd.read_csv("resp_value_last_session.csv")
     signal = df[f'{sensor_field}'].values
     scales = np.arange(5, 12)  # Corresponding to frequencies between 0.2 and 0.5 Hz
-    t = np.arange(len(signal))/10
+    t = df["time"].values
     # Detect apnea events
-    apnea_events = detector.detect_apnea_events(signal)
+    apnea_events = detector.detect_apnea_events(df)
 
     # plot detected events
     fig, ax = plt.subplots(1, 1, figsize=(12, 10), sharex=True)

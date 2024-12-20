@@ -1,6 +1,8 @@
 import pandas as pd
 from Helper import Helper
 from tqdm import tqdm
+import configparser
+
 
 
 class PulseOxiDetector(Helper):
@@ -85,13 +87,16 @@ class PulseOxiDetector(Helper):
 
 # EXAMPLE USAGE
 if __name__ == "__main__":
-    url = "http://sleep-apnea:8086"
-    token = "nFshsCSH5OyLFv9tSjPBIyOPvwXzJpt4zEAnm9OJFpVlEcUWOzSCAia3MRFrN-C8ljfQbKu6VgoRlTBQZoXTrg=="
-    org = "TU"
-    bucket = "Pulseoxy"
-    measurement = "pulseoxy_samples"
-    sensor_field = "PulseRate"
+    # Read configuration
+    config = configparser.ConfigParser()
+    config.read('config.ini')
 
+    url = config['INFLUXDB']['URL']
+    token = config['INFLUXDB']['TOKEN']
+    org = config['INFLUXDB']['ORG']
+    bucket = config['BUCKETS']['PULSEOXY_BUCKET']
+    measurement = config['MEASUREMENTS']['PULSEOXY_Measurements']
+    sensor_field = config['FIELDS']['PulseRate']
 
     # Create detector with 60 Hz data and a 5-minute rolling window
     detector = PulseOxiDetector(url, token, org, sensor_field, fs=50, baseline_window_minutes=5)
