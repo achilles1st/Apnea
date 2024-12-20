@@ -1,5 +1,7 @@
+from influxdb_client import InfluxDBClient, Point, WriteOptions
+from influxdb_client.domain.write_precision import WritePrecision
+from influxdb_client.client.write_api import ASYNCHRONOUS
 import pandas as pd
-from influxdb_client import InfluxDBClient
 from datetime import timedelta
 import warnings
 
@@ -13,6 +15,9 @@ class Helper:
         self.fs = fs
 
     def get_data(self, bucket, measurement, source='local'):
+        '''
+        gets the data from the last session within the last 24h
+        '''
         client = InfluxDBClient(url=self.url, token=self.token, org=self.org)
         query_api = client.query_api()
 
@@ -71,7 +76,7 @@ class Helper:
                 client.close()
 
         elif source == 'local':
-            print("Reading data from PulseRate_last_session.csv")
+            print(f"Reading data from {self.field}_last_session.csv")
             df = pd.read_csv(f'{self.field}_last_session.csv')
             df['time'] = pd.to_datetime(df['time'], format="mixed")
             df = df.sort_values('time').reset_index(drop=True)
@@ -79,16 +84,57 @@ class Helper:
         else:
             raise ValueError("Invalid source specified. Use 'influx' or 'local'.")
 
-    def verify_sampling_rate(self, df):
-        total_duration = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
+    def upload_apnea_events(self, events, measurement_name, user_name, bucket):
+        client = InfluxDBClient(url=self.url, token=self.token, org=self.org)
+        write_api = client.write_api(write_options=WriteOptions(
+            write_type=ASYNCHRONOUS,
+            batch_size=1000,
+            flush_interval=1000,
+            jitter_interval=0,
+            retry_interval=5000,
+            max_retries=3,
+            max_retry_delay=30000,
+            exponential_base=2
+        ))
+
+        points = []
+        for start, stop in events:
+            start_point = Point(f"{measurement_name}") \
+                .tag("user_name", f"{user_name}") \
+                .field(f"start_{self.field}_event", int(1)) \
+                .time(int(start.timestamp() * 1e9), WritePrecision.NS)
+            points.append(start_point)
+            # Add a duration field or another marker for the stop time
+            stop_point = Point(f"{measurement_name}") \
+                .tag("user_name", f"{user_name}") \
+                .field(f"stop_{self.field}_event", int(0)) \
+                .time(int(stop.timestamp() * 1e9), WritePrecision.NS)
+            points.append(stop_point)
+
+        # Write points to InfluxDB
+        write_api.write(bucket=bucket, record=points)
+        print("Apnea events uploaded successfully.")
+
+        client.close()
+        write_api.flush()
+
+    @staticmethod
+    def verify_sampling_rate(df, fs):
+        if isinstance(df['time'].iloc[0], pd.Timestamp):
+            total_duration = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
+        else:
+            total_duration = df['time'].iloc[-1] - df['time'].iloc[0]
+
         num_samples = len(df)
         overall_sampling_rate = num_samples / total_duration
 
         print(f"Overall sampling rate: {overall_sampling_rate:.2f} Hz")
 
-        tolerance = 0.1 * self.fs
-        if abs(overall_sampling_rate - self.fs) > tolerance:
+        tolerance = 0.1 * fs
+        if abs(overall_sampling_rate - fs) > tolerance:
             print(
-                f"Overall sampling rate verification failed. Expected: {self.fs} Hz, Found: {overall_sampling_rate:.2f} Hz")
+                f"Overall sampling rate verification failed. Expected: {fs} Hz, Found: {overall_sampling_rate:.4f} Hz")
         else:
             print("Sampling rate verified successfully.")
+
+        return overall_sampling_rate

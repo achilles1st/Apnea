@@ -119,6 +119,7 @@ class PulseOxiDetector(Helper):
         write_api.flush()
 
 
+# EXAMPLE USAGE
 if __name__ == "__main__":
     url = "http://sleep-apnea:8086"
     token = "nFshsCSH5OyLFv9tSjPBIyOPvwXzJpt4zEAnm9OJFpVlEcUWOzSCAia3MRFrN-C8ljfQbKu6VgoRlTBQZoXTrg=="
@@ -150,7 +151,8 @@ if __name__ == "__main__":
     else:
         print("No apnea events detected.")
 
-    # upload events
-    detector.upload_apnea_events(apnea_events, "pulseoxy_samples", "Stefan")
+    # upload events to influx db
+    # uncomment line below to test new data
+    #detector.upload_apnea_events(apnea_events, "pulseoxy_samples", "Stefan")
 
 
