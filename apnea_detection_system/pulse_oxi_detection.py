@@ -1,3 +1,8 @@
+"""
+For Debugging purposes only!!!
+This script is used to extract the ECG data from the InfluxDB and save it to a CSV file.
+"""
+
 import pandas as pd
 from Helper import Helper
 from tqdm import tqdm
