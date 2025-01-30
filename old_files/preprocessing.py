@@ -4,9 +4,12 @@ from speechpy import processing
 import numpy as np
 from scipy.fftpack import dct
 from PIL import Image as im
+import librosa
+import tensorflow as tf
+
 
 class MFCCProcessor:
-    def __init__(self, directory, save_directory, save_img=True):
+    def __init__(self, directory, save_directory, save_img=False):
         """
         Initializes the MFCCProcessor with the directory paths and configuration.
 
@@ -28,6 +31,10 @@ class MFCCProcessor:
             for filename in os.listdir(self.directory + extension):
                 if filename.endswith(".wav"):
                     fs, signal = wav.read(self.directory + extension + "/" + filename)
+
+                    if fs != 44100:
+                        print("Sampling rate is not correct: " + str(fs) + ". Resampling...")
+
 
                     # Ensure mono signal
                     if signal.ndim != 1:
@@ -79,7 +86,7 @@ class MFCCProcessor:
         numcep = 32
         dct_log_features = dct(log_features, type=2, axis=1)[:, :numcep]
 
-        return dct_log_features
+        return log_features
 
     def custom_filterbanks(self, nfilt=10, nfft=512, samplerate=44100, lowfreq=0, highfreq=None):
         """
@@ -127,8 +134,12 @@ class MFCCProcessor:
 
         return bankpoints, bankpoints_normal
 
+
 if __name__ == "__main__":
-    direc = 'C:/Users/tosic/Arduino_projects/Snoring-Detection/Snoring_Dataset_@16000'
+    #direc = 'C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/dataset_16'
+    #direc = 'C:/Users/tosic/Arduino_projects/DatasetSonring/dataset_44100'
+    direc = 'C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset_@16000/44100_additions/new_idea'
+
     save_dir = "./processed_data"
     processor = MFCCProcessor(direc, save_dir, save_img=False)
     processor.process_files()

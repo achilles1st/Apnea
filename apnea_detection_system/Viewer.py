@@ -5,6 +5,9 @@ from pyqtgraph.Qt import QtGui, QtCore, QtWidgets
 import pandas as pd
 import configparser
 import datetime
+from apnea_detection_system.pulse_oxi_detection import PulseOxiDetector
+from apnea_detection_system.Respiration_envelope import EnvelopeBasedApneaDetector
+from ecg_detection import ECGDetector
 
 
 class TimeAxisItem(pg.AxisItem):
@@ -27,7 +30,7 @@ class ApneaViewer(QtWidgets.QMainWindow):
 
         # Convert times into a numpy array of timestamps (POSIX epoch)
         # If `times` are numpy.datetime64 or pandas.Timestamp, convert them to datetime and then to POSIX time
-        if np.issubdtype(times.dtype, np.datetime64):
+        if np.issubdtype(times.dtype, (np.datetime64, "<M8[ns]")):
             # Numpy datetime64 to datetime
             datetimes = pd.to_datetime(times).to_pydatetime()
         elif isinstance(times[0], pd.Timestamp):
@@ -57,13 +60,18 @@ class ApneaViewer(QtWidgets.QMainWindow):
         main_layout = QtWidgets.QVBoxLayout(central_widget)
 
         # Define the unit for the left axis label
-        unit = "%" if self.field == "spO2" else "bpm"
+        self.unit = "%" if self.field == "spO2" else "bpm"
 
         # Create a custom bottom axis item
         time_axis = TimeAxisItem(orientation='bottom')
         self.pr_plot_widget = pg.PlotWidget(axisItems={'bottom': time_axis}, title=f"{self.field} Over Time")
-        self.pr_plot_widget.setLabel('left', f"{self.field}", units=unit)
+        self.pr_plot_widget.setLabel('left', f"{self.field}", units=self.unit)
         self.pr_plot_widget.setLabel('bottom', "Time")
+
+        # Set background color to white
+        self.pr_plot_widget.setBackground('w')
+        # Add legend to the plot
+        self.pr_plot_widget.addLegend(offset=(10, 10))
 
         # Plot pulse/resp data
         self.curve = self.pr_plot_widget.plot(self.times_in_seconds, self.values, pen='b', name="Data")
@@ -80,9 +88,11 @@ class ApneaViewer(QtWidgets.QMainWindow):
             elif isinstance(event[0], pd.Timestamp):
                 event_start_dt = event[0].to_pydatetime().replace(tzinfo=None)
                 event_end_dt = event[1].to_pydatetime().replace(tzinfo=None)
+            elif isinstance(event[0], datetime.datetime):
+                event_start_dt = event[0].replace(tzinfo=None)
+                event_end_dt = event[1].replace(tzinfo=None)
             else:
-                # If events are in another numeric form, you'd need to convert accordingly
-                continue
+               raise ValueError("Event times must be datetime-like for timestamp axis.")
 
             event_start = event_start_dt.timestamp()
             event_end = event_end_dt.timestamp()
@@ -98,6 +108,7 @@ class ApneaViewer(QtWidgets.QMainWindow):
         self.pr_plot_widget.addItem(self.vline, ignoreBounds=True)
 
         self.text_item = pg.TextItem("", anchor=(0, 1))
+        self.text_item.setColor('k')  # Set text color to black
         self.pr_plot_widget.addItem(self.text_item)
 
         # Connect the mouse movement signal
@@ -132,7 +143,7 @@ class ApneaViewer(QtWidgets.QMainWindow):
             self.vline.setPos(closest_time)
             if self.baselines is not None:
                 closest_baseline = self.baselines[idx]
-                self.text_item.setText(f"Time: {closest_dt}\n{self.field}: {closest_pr:.1f}bpm\nBaseline: {closest_baseline:.1f}%")
+                self.text_item.setText(f"Time: {closest_dt}\n{self.field}: {closest_pr:.1f}{self.unit}\nBaseline: {closest_baseline:.1f}{self.unit}")
             else:
                 self.text_item.setText(f"Time: {closest_dt}\n{self.field}: {closest_pr:.1f}")
 
@@ -147,25 +158,29 @@ def main():
     url = config['INFLUXDB']['URL']
     token = config['INFLUXDB']['TOKEN']
     org = config['INFLUXDB']['ORG']
-    bucket = config['BUCKETS']['PULSEOXY_BUCKET']
-    measurement = config['MEASUREMENTS']['Respiration_Measurements']
-    sensor_field = config['FIELDS']['Respiration']
-
-    from apnea_detection_system.pulse_oxi_detection import PulseOxiDetector
-    from apnea_detection_system.Respiration_detection import CWTBasedApneaDetector
+    bucket = config['BUCKETS']['ECG_BUCKET']
+    measurement = config['MEASUREMENTS']['ECG_Measurements']
+    sensor_field = config['FIELDS']['ECG']
 
     if sensor_field == "spO2" or sensor_field == "PulseRate":
-        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=30)
+        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=10)
         df = detector.get_data(bucket, measurement, source='local')
-        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=15)
+        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=10)
         apnea_events = detector.detect_apnea_events(df_pf_baseline)
         baselines = df_pf_baseline["baseline"].values
         data = df[f"{sensor_field}"].values
         t = df["time"].values  # numpy array of datetime64 objects
     elif sensor_field == "resp_value":
-        detector = CWTBasedApneaDetector(url, token, org, sensor_field, fs=10, min_duration=6)
+        detector = EnvelopeBasedApneaDetector(url, token, org, sensor_field, fs=10, min_duration=4)
         df = detector.get_data(bucket, measurement, source='local')
         apnea_events = detector.detect_apnea_events(df)
+        data = df[f"{sensor_field}"].values
+        t = df["time"].values
+        baselines = None
+    elif sensor_field == "ecg_value":  # ECG Integration
+        detector = ECGDetector(url, token, org, sensor_field)
+        df = detector.get_data(bucket, measurement, source='local')
+        apnea_events = detector.classify_ecg(df)
         data = df[f"{sensor_field}"].values
         t = df["time"].values
         baselines = None

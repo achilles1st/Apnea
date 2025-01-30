@@ -16,7 +16,7 @@ class Helper:
 
     def get_data(self, bucket, measurement, source='local'):
         '''
-        gets the data from the last session within the last 24h or can load saved csl file <field>_last_session.csv
+        gets the data from the last session within the last 24h or can load saved .csv file <field>_last_session.csv
         '''
 
         client = InfluxDBClient(url=self.url, token=self.token, org=self.org)
@@ -70,8 +70,15 @@ class Helper:
                 warnings.warn(f"Error in get_data: {e}\n Reading data from {self.field}_last_session.csv", RuntimeWarning)
                 print(f"Reading data from {self.field}_last_session.csv")
                 df = pd.read_csv(f'{self.field}_last_session.csv')
-                df['time'] = pd.to_datetime(df['time'], format="mixed")
-                df = df.sort_values('time').reset_index(drop=True)
+                if pd.api.types.is_numeric_dtype(df['time']):
+                    # Get the current date as the origin
+                    current_date = pd.Timestamp.now()
+                    # Convert `time` to timedelta (in seconds) and add to the origin
+                    df["time"] = current_date + pd.to_timedelta(df["time"], unit="s")
+                    df = df.sort_values('time').reset_index(drop=True)
+                else:
+                    df['time'] = pd.to_datetime(df['time'], format="mixed")
+                    df = df.sort_values('time').reset_index(drop=True)
                 return df
             finally:
                 client.close()
@@ -79,8 +86,15 @@ class Helper:
         elif source == 'local':
             print(f"Reading data from {self.field}_last_session.csv")
             df = pd.read_csv(f'{self.field}_last_session.csv')
-            df['time'] = pd.to_datetime(df['time'], format="mixed")
-            df = df.sort_values('time').reset_index(drop=True)
+            if pd.api.types.is_numeric_dtype(df['time']):
+                # Get the current date as the origin
+                current_date = pd.Timestamp.now()
+                # Convert `time` to timedelta (in seconds) and add to the origin
+                df["time"] = current_date + pd.to_timedelta(df["time"], unit="s")
+                df = df.sort_values('time').reset_index(drop=True)
+            else:
+                df['time'] = pd.to_datetime(df['time'], format="mixed")
+                df = df.sort_values('time').reset_index(drop=True)
             return df
         else:
             raise ValueError("Invalid source specified. Use 'influx' or 'local'.")
@@ -121,6 +135,10 @@ class Helper:
 
     @staticmethod
     def verify_sampling_rate(df, fs):
+        # Ensure the 'time' column is in datetime format
+        if not pd.api.types.is_datetime64_any_dtype(df['time']):
+            df['time'] = pd.to_datetime(df['time'], format="mixed")
+
         if isinstance(df['time'].iloc[0], pd.Timestamp):
             total_duration = (df['time'].iloc[-1] - df['time'].iloc[0]).total_seconds()
         else:
