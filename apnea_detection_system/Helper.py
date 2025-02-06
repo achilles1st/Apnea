@@ -26,7 +26,7 @@ class Helper:
             try:
                 flux_query = f'''
                     from(bucket: "{bucket}")
-                    |> range(start: -{24}h)
+                    |> range(start: -{48}h)
                     |> filter(fn: (r) => r._measurement == "{measurement}")
                     |> filter(fn: (r) => r._field == "{self.field}")
                 '''
@@ -128,10 +128,66 @@ class Helper:
 
         # Write points to InfluxDB
         write_api.write(bucket=bucket, record=points)
-        print("Apnea events uploaded successfully.")
+        print(f"{measurement_name}: Apnea events uploaded successfully.")
 
         client.close()
         write_api.flush()
+
+    def upload_ahi_index(self, ahi, total_sleep_time_hours, measurement_name, user_name, bucket):
+        client = InfluxDBClient(url=self.url, token=self.token, org=self.org)
+        write_api = client.write_api(write_options=WriteOptions(
+            write_type=ASYNCHRONOUS,
+            batch_size=1,
+            flush_interval=1000,
+            jitter_interval=0,
+            retry_interval=5000,
+            max_retries=3,
+            max_retry_delay=30000,
+            exponential_base=2
+        ))
+
+        point = Point(measurement_name) \
+            .tag("user_name", user_name) \
+            .field("ahi_value", float(ahi)) \
+            .field("total_sleep_time_hours", float(total_sleep_time_hours)) \
+            .time(int(pd.Timestamp.utcnow().timestamp() * 1e9), WritePrecision.NS)
+
+        # Write point to InfluxDB
+        write_api.write(bucket=bucket, record=point)
+        print("AHI index uploaded successfully.")
+
+        # Flush pending writes before closing the client
+        write_api.flush()
+        client.close()
+
+    @staticmethod
+    def get_snoring_event_timestamps(url, token, org, bucket, start="-24h"):
+        """
+        Retrieves the timestamps of snoring events from InfluxDB for a given user.
+        """
+        # Initialize InfluxDB client
+        client = InfluxDBClient(url=url, token=token, org=org)
+
+        # Flux query to fetch snoring event timestamps
+        query = f"""
+        from(bucket: "{bucket}")
+          |> range(start: {start})
+          |> filter(fn: (r) => r._measurement == "snoring_events")
+          |> filter(fn: (r) => r._field == "probability")
+          |> keep(columns: ["_time"])
+        """
+
+        # Execute query
+        query_api = client.query_api()
+        tables = query_api.query(query)
+
+        # Extract timestamps
+        timestamps = [pd.Timestamp(record["_time"]) for table in tables for record in table.records]
+
+        # Close the InfluxDB client connection
+        client.close()
+
+        return timestamps
 
     @staticmethod
     def verify_sampling_rate(df, fs):
