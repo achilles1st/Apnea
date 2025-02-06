@@ -158,28 +158,59 @@ def main():
     url = config['INFLUXDB']['URL']
     token = config['INFLUXDB']['TOKEN']
     org = config['INFLUXDB']['ORG']
-    bucket = config['BUCKETS']['ECG_BUCKET']
-    measurement = config['MEASUREMENTS']['ECG_Measurements']
-    sensor_field = config['FIELDS']['ECG']
 
-    if sensor_field == "spO2" or sensor_field == "PulseRate":
-        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=10)
-        df = detector.get_data(bucket, measurement, source='local')
+    sensor = "ecg"
+
+    if sensor == "ecg":
+        bucket = config['BUCKETS']['ECG_BUCKET']
+        measurement = config['MEASUREMENTS']['ECG_Measurements']
+        sensor_field = config['FIELDS']['ECG']
+    elif sensor == "respiration":
+        bucket = config['BUCKETS']['RESPIRATORY_BUCKET']
+        measurement = config['MEASUREMENTS']['Respiration_Measurements']
+        sensor_field = config['FIELDS']['Respiration']
+    elif sensor == "pulse_rate":
+        bucket = config['BUCKETS']['PULSEOXY_BUCKET']
+        measurement = config['MEASUREMENTS']['PULSEOXY_Measurements']
+        sensor_field = config['FIELDS']['PulseRate']
+    elif sensor == "spO2":
+        bucket = config['BUCKETS']['PULSEOXY_BUCKET']
+        measurement = config['MEASUREMENTS']['PULSEOXY_Measurements']
+        sensor_field = config['FIELDS']['spO2']
+    else:
+        raise ValueError(f"Invalid sensor: {sensor}")
+
+    if sensor_field == "spO2":
+        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=20)
+        df = detector.get_data(bucket, measurement, source='influx')
+        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=10)
+        apnea_events = detector.detect_apnea_events(df_pf_baseline)
+        baselines = df_pf_baseline["baseline"].values
+        data = df[f"{sensor_field}"].values
+        t = df["time"].values  # numpy array of datetime64 objects
+    elif sensor_field == "PulseRate":
+        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=20)
+        df = detector.get_data(bucket, measurement, source='influx')
         df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=10)
         apnea_events = detector.detect_apnea_events(df_pf_baseline)
         baselines = df_pf_baseline["baseline"].values
         data = df[f"{sensor_field}"].values
         t = df["time"].values  # numpy array of datetime64 objects
     elif sensor_field == "resp_value":
-        detector = EnvelopeBasedApneaDetector(url, token, org, sensor_field, fs=10, min_duration=4)
-        df = detector.get_data(bucket, measurement, source='local')
-        apnea_events = detector.detect_apnea_events(df)
+        detector = EnvelopeBasedApneaDetector(url, token, org, sensor_field, fs=10, min_duration=10)
+        df = detector.get_data(bucket, measurement, source='influx')
         data = df[f"{sensor_field}"].values
+        # Convert the respiration signal to a pandas Series
+        respiration_series = pd.Series(data)
+        # Apply the moving average with a window size of 5
+        data = respiration_series.rolling(window=5).mean()
+        df[f"{sensor_field}"] = data
         t = df["time"].values
+        apnea_events = detector.detect_apnea_events(df)
         baselines = None
     elif sensor_field == "ecg_value":  # ECG Integration
         detector = ECGDetector(url, token, org, sensor_field)
-        df = detector.get_data(bucket, measurement, source='local')
+        df = detector.get_data(bucket, measurement, source='influx')
         apnea_events = detector.classify_ecg(df)
         data = df[f"{sensor_field}"].values
         t = df["time"].values

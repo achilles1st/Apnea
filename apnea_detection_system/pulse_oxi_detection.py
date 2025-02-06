@@ -11,7 +11,7 @@ import configparser
 
 
 class PulseOxiDetector(Helper):
-    def __init__(self, url, token, org, field, fs=60, baseline_window_minutes=5):
+    def __init__(self, url, token, org, field, fs=60, baseline_window_minutes=10):
         super().__init__(url, token, org, field, fs)
         self.baseline_window_minutes = baseline_window_minutes
         self.baseline_window_samples = self.baseline_window_minutes * 60 * self.fs
@@ -20,7 +20,7 @@ class PulseOxiDetector(Helper):
             self.event_start_threshold_function = lambda baseline, std: baseline - (2 * std)
             self.event_end_threshold_function = lambda baseline, std: baseline
         elif self.field == 'spO2':
-            self.event_start_threshold_function = lambda baseline, std: baseline - (1.5 * std)
+            self.event_start_threshold_function = lambda baseline, std: baseline - (2 * std)
             self.event_end_threshold_function = lambda baseline, std: baseline
         else:
             raise ValueError(f"Unknown field: {field}")
@@ -41,14 +41,16 @@ class PulseOxiDetector(Helper):
         """
         Detect apnea events with hysteresis:
 
-        start_condition: value < event_start_threshold(baseline)
-        end_condition:   value > event_end_threshold(baseline)
+        - start_condition: value < event_start_threshold(baseline)
+        - end_condition:   value > event_end_threshold(baseline)
 
-        Ignores rows where value == 0, which indicates a disconnection or inability to find the finger.
+        Ignores rows where value == 0 (indicating a disconnection) and ignores events
+        that last longer than one minute.
         """
         events = []
         currently_in_event = False
         event_start_time = None
+        max_event_duration = pd.Timedelta(minutes=1)  # One minute threshold
 
         for i in tqdm(range(len(df)), desc="Detecting Apnea Events", unit="rows"):
             value = df.loc[i, f'{self.field}']
@@ -60,7 +62,7 @@ class PulseOxiDetector(Helper):
             baseline = df.loc[i, 'baseline']
             std = df.loc[i, 'std']
 
-            # If baseline isn't computed yet (very start), skip
+            # If baseline isn't computed yet (e.g. at the very start), skip
             if pd.isna(baseline):
                 continue
 
@@ -70,21 +72,24 @@ class PulseOxiDetector(Helper):
             if currently_in_event:
                 # Currently in an event, check if we should end it
                 if value > end_threshold:
-                    # End event
-                    currently_in_event = False
                     event_end_time = df.loc[i, 'time']
-                    events.append((event_start_time, event_end_time))
+                    # Check event duration before appending
+                    if event_end_time - event_start_time <= max_event_duration:
+                        events.append((event_start_time, event_end_time))
+                    # Else: if the event is longer than one minute, ignore it
+                    currently_in_event = False
             else:
                 # Not in an event, check if we should start one
                 if value < start_threshold:
-                    # Start event
                     currently_in_event = True
                     event_start_time = df.loc[i, 'time']
 
-        # If we reach the end and are still in an event
+        # If we reach the end of the data and are still in an event,
+        # finalize the event and check its duration.
         if currently_in_event:
             event_end_time = df.loc[len(df) - 1, 'time']
-            events.append((event_start_time, event_end_time))
+            if event_end_time - event_start_time <= max_event_duration:
+                events.append((event_start_time, event_end_time))
 
         return events
 
@@ -104,12 +109,12 @@ if __name__ == "__main__":
     sensor_field = config['FIELDS']['PulseRate']
 
     # Create detector with 60 Hz data and a 5-minute rolling window
-    detector = PulseOxiDetector(url, token, org, sensor_field, fs=50, baseline_window_minutes=5)
+    detector = PulseOxiDetector(url, token, org, sensor_field, fs=50, baseline_window_minutes=10)
     df = detector.get_data(bucket, measurement, source='influx')
 
     detector.verify_sampling_rate(df, 60)
 
-    df = detector.compute_rolling_baseline(df, min_periods_minutes=2.5)
+    df = detector.compute_rolling_baseline(df, min_periods_minutes=5)
     # Calculate the unique baselines
     unique_baselines = df['baseline'].unique()
     # Print the unique baselines
@@ -125,8 +130,5 @@ if __name__ == "__main__":
     else:
         print("No apnea events detected.")
 
-    # upload events to influx db
-    # uncomment line below to test new data
-    #detector.upload_apnea_events(apnea_events, "pulseoxy_samples", "Stefan")
 
 
