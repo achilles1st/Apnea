@@ -24,8 +24,19 @@ import logging
 from logging.handlers import RotatingFileHandler
 import asyncio
 from bleak import BleakScanner, BleakClient
+import math
+
 
 app = Flask(__name__)
+
+def find_device_index(device_name):
+    devices = sd.query_devices()
+    for idx, device in enumerate(devices):
+        if device_name in device['name']:
+            logger.debug(f"Found device '{device_name}' at index {idx}")
+            return int(idx)
+    print(f"Device '{device_name}' not found")
+    return 0
 
 # Configure Logging
 def setup_logging():
@@ -80,7 +91,7 @@ threads = []  # List to track active threads
 
 channels = 1
 sample_rate = 44100
-device_index = 0  # for windows, use 1
+device_index = find_device_index("USB PnP Sound Device: Audio (hw:2,0)")  # for windows, use 1
 
 # Load configuration from config.ini
 config = configparser.ConfigParser()
@@ -200,20 +211,65 @@ def write_ecg_to_influxdb():
     if batch_points:
         write_api.write(bucket=ECG_BUCKET, org=INFLUXDB_ORG, record=batch_points)
 
+def calculate_pitch_and_roll(accX, accY, accZ):
+    pitch = math.atan2(accY, math.sqrt(accX**2 + accZ**2)) * (180.0 / math.pi)
+    roll = math.atan2(-accX, accZ) * (180.0 / math.pi)
+    return pitch, roll
 
 def notification_handler(sender, data):
     global user_name
-    # Decode data (assuming the data is simple text; adjust parsing as needed)
-    # decoded_data = data.decode('utf-8', errors='ignore').strip()
-    decoded_data = data.decode()
-    timestamp = datetime.datetime.now(datetime.timezone.utc)
-    decoded_data = decoded_data.split(":")[1].strip()
-    #resp_value = float(decoded_data) if decoded_data.isnumeric() else None
-    resp_value = float(decoded_data)
+    # Decode data (assuming the data is simple text
+    try:
+        decoded_data = data.decode('utf-8')
+    except UnicodeDecodeError:
+        decoded_data = data.decode('latin1', errors='replace')
 
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    entry = f"{timestamp}, {decoded_data}\n"
+    semicolon_index = entry.find(';')
+    result = entry[:semicolon_index] if semicolon_index != -1 else decoded_data
+    values = result.split(',')
+
+    accX = accY = accZ = analogValue = None
+
+    for value in values:
+        value = value.strip()
+        if 'accX' in value:
+            accX = float(value.split(':')[1].strip())
+        elif 'accY' in value:
+            accY = float(value.split(':')[1].strip())
+        elif 'accZ' in value:
+            accZ = float(value.split(':')[1].strip())
+        elif 'analogValue' in value:
+            analogValue = int(value.split(':')[1].strip())
+
+    # Compute pitch and roll if acceleration data is available
+    if accX is not None and accY is not None and accZ is not None:
+        pitch, roll = calculate_pitch_and_roll(accX, accY, accZ)
+    else:
+        pitch, roll = None, None
+
+    # Determine sleeping position
+    if pitch is not None and roll is not None:
+        if abs(roll) < 15 and abs(pitch) < 15:
+            position = 1  # flat
+        elif 65 < roll < 100:
+            position = 2  # left
+        elif -100 < roll < -65:
+            position = 3  # right
+        elif 150 < abs(pitch) < 200:
+            position = 4  # flat st
+        else:
+            position = 5  # unknown
+    else:
+        position = 5  # Default to unknown if pitch/roll not available
+
+    # Store data in queue
     data_point = {
         'time': timestamp,
-        'resp_value': resp_value
+        'resp_value': analogValue,
+        'position': position
     }
 
     # Put data into the queue
@@ -285,11 +341,12 @@ def write_respiratory_to_influxdb():
             point = Point("resp_belt_samples") \
                 .tag("user_name", user_name) \
                 .field("resp_value", data_point['resp_value']) \
+                .field("position", data_point['position']) \
                 .time(int(data_point['time'].timestamp() * 1e9), WritePrecision.NS)
             batch_points.append(point)
             respiratory_data_queue.task_done()
 
-            if len(batch_points) >= DATA_BATCH_SIZE:
+            if len(batch_points) >= 30:  # all 3 seconds update
                 write_api.write(bucket=RESPIRATORY_BUCKET, org=INFLUXDB_ORG, record=batch_points)
                 batch_points = []
         except Empty:
