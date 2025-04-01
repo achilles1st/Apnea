@@ -1,3 +1,8 @@
+# The `SnoringDetector` class is designed to detect snoring from audio data.
+# Some of the code in this class has been adapted from the following repositories:
+# - https://github.com/alek6kun/snore-recognition/tree/main
+# - https://github.com/adrianagaler/Snoring-Detection/tree/master
+
 import pathlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -11,7 +16,7 @@ from sklearn.model_selection import train_test_split
 
 
 class SnoringDetector:
-    def __init__(self, dataset_path, batch_size=150, validation_split=0.2, seed=0, output_sequence_length=44100, sample_rate=44100):
+    def __init__(self, dataset_path, batch_size=64, validation_split=0.2, seed=42, output_sequence_length=16000, sample_rate=16000):
         self.dataset_path = dataset_path
         self.batch_size = batch_size
         self.validation_split = validation_split
@@ -184,7 +189,7 @@ class SnoringDetector:
 
     def train_model(self, epochs=100, patience=10):
         checkpoint = keras.callbacks.ModelCheckpoint(
-            'models/cnn_latest_44k.keras',
+            'models/cnn_test_long.keras',  # finale2_44k latest, cnn_latest_16k.keras
             verbose=1,
             monitor='val_loss',
             save_best_only=True,
@@ -202,9 +207,9 @@ class SnoringDetector:
 
     def evaluate_model(self):
         test_loss, test_acc = self.model.evaluate(self.test_log_mel_ds)
-        print(f"Test accuracy: {test_acc:.2f}")
+        print(f"Test accuracy: {test_acc:.6f}")
 
-    def plot_training_history(self):
+    def plot_training_history(self, save_path=None):
         if self.history is None:
             print("No training history available. Train the model first.")
             return
@@ -215,23 +220,39 @@ class SnoringDetector:
         val_loss = self.history.history['val_loss']
         epochs_range = range(len(acc))
 
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=(14, 8))
 
         plt.subplot(1, 2, 1)
         plt.plot(epochs_range, acc, label='Training Accuracy')
         plt.plot(epochs_range, val_acc, label='Validation Accuracy')
         plt.legend(loc='lower right')
-        plt.title('Training and Validation Accuracy')
+        plt.title('Training and Validation Accuracy', fontsize=19)
+        plt.xlabel('epochs', fontsize=18)  # Add x-label
+        plt.ylabel('accuracy', fontsize=18)  # Add x-label
+        plt.xticks(fontsize=18)
+        plt.yticks(fontsize=18)
+        plt.legend(fontsize=16)
 
         plt.subplot(1, 2, 2)
         plt.plot(epochs_range, loss, label='Training Loss')
         plt.plot(epochs_range, val_loss, label='Validation Loss')
         plt.legend(loc='upper right')
-        plt.title('Training and Validation Loss')
+        plt.title('Training and Validation Loss', fontsize=19)
+        plt.xlabel('epochs', fontsize=18)  # Add x-label
+        plt.ylabel('loss', fontsize=18)  # Add x-label
+        plt.xticks(fontsize=18)
+        plt.yticks(fontsize=18)
+        plt.legend(fontsize=16)
+        plt.savefig("loss_acc.png", dpi=300)  # High resolution for better clarity
 
         plt.show()
+        if save_path:
+            plt.savefig(save_path)
+        else:
+            plt.show()
+        plt.close()
 
-    def plot_confusion_matrix(self):
+    def plot_confusion_matrix(self, save_path=None):
         # Get true labels and predictions
         y_true = []
         y_pred = []
@@ -246,9 +267,27 @@ class SnoringDetector:
 
         cm = confusion_matrix(y_true, y_pred_labels)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=self.label_names)
-        disp.plot(cmap=plt.cm.Blues)
-        plt.title('Confusion Matrix')
+        fig, ax = plt.subplots(figsize=(6, 6))  # Adjust the figure size
+        disp.plot(cmap=plt.cm.Blues, colorbar=False, ax=ax)  # Change colormap and add colorbar
+
+        # Increase the font size by accessing the text objects from the axis
+        for text_obj in ax.texts:
+            text_obj.set_fontsize(18)
+
+        plt.title('Confusion Matrix', fontsize=20)
+        plt.xlabel('Predicted Label', fontsize=18)
+        plt.ylabel('True Label', fontsize=18)
+        plt.xticks(fontsize=18)
+        plt.yticks(fontsize=18)
+        plt.savefig("confusion.png", dpi=300)  # High resolution for better clarity
         plt.show()
+
+
+        if save_path:
+            plt.savefig(save_path)
+        else:
+            plt.show()
+        plt.close()
 
     def plot_sample_waveforms(self):
         # Plot sample waveforms
@@ -281,14 +320,17 @@ class SnoringDetector:
 
 
 if __name__ == "__main__":
-    detector = SnoringDetector('C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset/44_clean')
+    # C:/Users/tosic/Arduino_projects/sensor_com/snoring_detection/Snoring_Dataset/44_clean
+    detector = SnoringDetector('C:\\Users\\tosic\\Arduino_projects\\sensor_com\\snoring_detection\\Snoring_Dataset\\16_clean', sample_rate=16000)
     detector.load_data()
     detector.preprocess_data()
     detector.build_model()
-    history = detector.train_model(epochs=64, patience=12)
-    # plots
-    detector.plot_training_history()
+    history = detector.train_model(epochs=1000, patience=1000)
     detector.evaluate_model()
-    detector.plot_confusion_matrix()
+
+    # plots
+    detector.plot_training_history(save_path='training_history.png')
+    detector.evaluate_model()
+    detector.plot_confusion_matrix(save_path='confusion_matrix.png')
     #detector.plot_sample_waveforms()
 
