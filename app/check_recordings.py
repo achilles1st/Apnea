@@ -6,6 +6,8 @@ from influxdb_client.client.write_api import ASYNCHRONOUS, WriteOptions
 from influxdb_client.domain.write_precision import WritePrecision
 import datetime
 import configparser
+from scipy.signal import resample_poly
+
 
 class SnoringDetector:
     def __init__(self):
@@ -69,8 +71,13 @@ class SnoringDetector:
 
     def classify_snoring_segment(self, segment, sample_rate):
         """Classifies snoring events in the given audio segment."""
+
+        # 1) Downsample from the original sample rate (44.1kHz) to 16kHz
+        desired_sr = 16000
+        segment_16k = resample_poly(segment, desired_sr, sample_rate)
+
         # Convert segment to tensor and normalize
-        x = tf.convert_to_tensor(segment, dtype=tf.float32)
+        x = tf.convert_to_tensor(segment_16k, dtype=tf.float32)
         x = x / (tf.reduce_max(tf.abs(x)) + 1e-6)  # Normalize between -1 and 1
 
         # Ensure x is 1D
