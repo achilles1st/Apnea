@@ -7,7 +7,7 @@ import keyboard  # You need to install the keyboard module
 sample_rate = 44100  # Hz
 channels = 1
 device_index = 1  # Replace with the index of your microphone
-filename = 'recorded_audio.wav'
+filename = 'recorded_audio_talk0.wav'
 
 
 def record_audio():

@@ -14,6 +14,56 @@ class Helper:
         self.field = field
         self.fs = fs
 
+    def get_data_between(self, bucket, measurement, start_time, end_time, source='influx'):
+        """
+        Extracts data between two specific timepoints.
+
+        Parameters:
+            bucket (str): InfluxDB bucket name.
+            measurement (str): Measurement name.
+            start_time (str): Start of the time range (Flux acceptable format, e.g. '2023-03-01T00:00:00Z').
+            end_time (str): End of the time range (Flux acceptable format).
+            source (str): Either 'influx' to query the database or 'local' to load data from CSV.
+
+        Returns:
+            pd.DataFrame: DataFrame containing the filtered data.
+        """
+        if source == 'influx':
+            client = InfluxDBClient(url=self.url, token=self.token, org=self.org)
+            query_api = client.query_api()
+            try:
+                flux_query = f'''
+                       from(bucket: "{bucket}")
+                       |> range(start: {start_time}, stop: {end_time})
+                       |> filter(fn: (r) => r._measurement == "{measurement}")
+                       |> filter(fn: (r) => r._field == "{self.field}")
+                   '''
+                result = query_api.query(flux_query)
+
+                data_points = []
+                for table in result:
+                    for record in table.records:
+                        data_points.append({
+                            'time': record.get_time(),
+                            f'{self.field}': record.get_value()
+                        })
+
+                if not data_points:
+                    raise Exception("No data found between the specified timepoints.")
+
+                df = pd.DataFrame(data_points)
+                df = df.sort_values('time').reset_index(drop=True)
+                return df
+
+            except Exception as e:
+                warnings.warn(f"Error in get_data_between: {e}", RuntimeWarning)
+                print(f"Nothing found")
+            finally:
+                client.close()
+
+        elif source == 'local':
+            print(f"Nothing selected")
+
     def get_data(self, bucket, measurement, source='local'):
         '''
         gets the data from the last session within the last 24h or can load saved .csv file <field>_last_session.csv
@@ -26,7 +76,7 @@ class Helper:
             try:
                 flux_query = f'''
                     from(bucket: "{bucket}")
-                    |> range(start: -{48}h)
+                    |> range(start: -{24}h)
                     |> filter(fn: (r) => r._measurement == "{measurement}")
                     |> filter(fn: (r) => r._field == "{self.field}")
                 '''

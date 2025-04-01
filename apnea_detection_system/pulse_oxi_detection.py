@@ -20,8 +20,10 @@ class PulseOxiDetector(Helper):
             self.event_start_threshold_function = lambda baseline, std: baseline - (2 * std)
             self.event_end_threshold_function = lambda baseline, std: baseline
         elif self.field == 'spO2':
-            self.event_start_threshold_function = lambda baseline, std: baseline - (2 * std)
+            self.event_start_threshold_function = lambda baseline, std: baseline - (3 * std)
             self.event_end_threshold_function = lambda baseline, std: baseline
+        elif self.field == 'PulseWave':
+            print("reading PulseWave data")
         else:
             raise ValueError(f"Unknown field: {field}")
 
@@ -50,7 +52,7 @@ class PulseOxiDetector(Helper):
         events = []
         currently_in_event = False
         event_start_time = None
-        max_event_duration = pd.Timedelta(minutes=1)  # One minute threshold
+        max_event_duration = pd.Timedelta(minutes=2)  # two minute threshold
 
         for i in tqdm(range(len(df)), desc="Detecting Apnea Events", unit="rows"):
             value = df.loc[i, f'{self.field}']
@@ -71,7 +73,7 @@ class PulseOxiDetector(Helper):
 
             if currently_in_event:
                 # Currently in an event, check if we should end it
-                if value > end_threshold:
+                if value >= end_threshold:
                     event_end_time = df.loc[i, 'time']
                     # Check event duration before appending
                     if event_end_time - event_start_time <= max_event_duration:
@@ -80,7 +82,7 @@ class PulseOxiDetector(Helper):
                     currently_in_event = False
             else:
                 # Not in an event, check if we should start one
-                if value < start_threshold:
+                if value <= start_threshold:
                     currently_in_event = True
                     event_start_time = df.loc[i, 'time']
 

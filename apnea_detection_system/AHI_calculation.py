@@ -10,7 +10,7 @@ import pytz
 
 
 class AHICalculator:
-    def __init__(self, significance_weights=None, threshold=1.0, merge_window=timedelta(seconds=30)):
+    def __init__(self, significance_weights=None, threshold=1.0, merge_window=timedelta(seconds=60)):
         """
         Initialize the AHI Calculator with weights for each sensor modality.
         :param significance_weights: Dictionary with weights for each modality {"respiration": 1.0, "pulse_oxi": 0.7, "ecg": 0.5, "snore": 0.3}
@@ -19,7 +19,7 @@ class AHICalculator:
         """
         self.weights = significance_weights if significance_weights else {
             "respiration": 1.0,
-            "pulse_oxi": 0.7,
+            "pulse_oxi": 0.5,
             "pulse_rate": 0.5,
             "ecg": 0.3,
             "snore": 0.3
@@ -80,7 +80,9 @@ class AHICalculator:
         :return: AHI value
         """
         num_events = len(merged_events)
+        print(f"Total number of events: {num_events}")
         ahi = num_events / total_sleep_time_hours
+        print(f"Total sleep time: {total_sleep_time_hours:.4f} hours")
         return ahi
 
 
@@ -100,6 +102,7 @@ def main(user_name, upload_apnea_events=True):
     ecg_detector = ECGDetector(url, token, org, "ecg_value")
     df_ecg = ecg_detector.get_data(bucket_ecg, measurment_ecg, source='influx')
     ecg_events = ecg_detector.classify_ecg(df_ecg)
+    print(f"ECG detected {len(ecg_events)} ECG events.")
     # upload apnea events to influxdb
     if upload_apnea_events:
         ecg_detector.upload_apnea_events(ecg_events, "ecg_events", user_name, bucket_ecg)
@@ -107,19 +110,21 @@ def main(user_name, upload_apnea_events=True):
     # Extract Pulse rate events
     bucket_pulseoxy = config['BUCKETS']['PULSEOXY_BUCKET']
     measurement_pulseoxy = config['MEASUREMENTS']['PULSEOXY_Measurements']
-    pulse_detector = PulseOxiDetector(url, token, org, "PulseRate", fs=60, baseline_window_minutes=20)
+    pulse_detector = PulseOxiDetector(url, token, org, "PulseRate", fs=60, baseline_window_minutes=8)
     df_pulse = pulse_detector.get_data(bucket_pulseoxy, measurement_pulseoxy, source='influx')
-    df_pulse_baseline = pulse_detector.compute_rolling_baseline(df_pulse, min_periods_minutes=10)
+    df_pulse_baseline = pulse_detector.compute_rolling_baseline(df_pulse, min_periods_minutes=8)
     pulse_events = pulse_detector.detect_apnea_events(df_pulse_baseline)
+    print(f"Pulseoximeter detected {len(pulse_events)} pulse events.")
     # upload apnea events to influxdb
     if upload_apnea_events:
         pulse_detector.upload_apnea_events(pulse_events, "pulse_events", user_name, bucket_pulseoxy)
 
     # Extract Oximetry events
-    spo2_detector = PulseOxiDetector(url, token, org, "spO2", fs=60, baseline_window_minutes=20)
+    spo2_detector = PulseOxiDetector(url, token, org, "spO2", fs=60, baseline_window_minutes=8)
     df_pulse = spo2_detector.get_data(bucket_pulseoxy, measurement_pulseoxy, source='influx')
-    df_pulse_baseline = spo2_detector.compute_rolling_baseline(df_pulse, min_periods_minutes=10)
+    df_pulse_baseline = spo2_detector.compute_rolling_baseline(df_pulse, min_periods_minutes=8)
     spo2_events = spo2_detector.detect_apnea_events(df_pulse_baseline)
+    print(f"Pulseoximeter detected {len(spo2_events)} SpO2 events.")
     # upload apnea events to influxdb
     if upload_apnea_events:
         spo2_detector.upload_apnea_events(spo2_events, "spo2_events", user_name, bucket_pulseoxy)
@@ -130,6 +135,7 @@ def main(user_name, upload_apnea_events=True):
     resp_detector = EnvelopeBasedApneaDetector(url, token, org, "resp_value", fs=10, min_duration=10)
     df_resp = resp_detector.get_data(bucket_resp, measurement_resp, source='influx')
     respiration_events = resp_detector.detect_apnea_events(df_resp)
+    print(f"Respiration detected {len(respiration_events)} respiration events.")
 
     timezone = pytz.UTC
     respiration_events = [(pd.Timestamp(start).tz_localize(timezone), pd.Timestamp(end).tz_localize(timezone)) for
@@ -140,7 +146,8 @@ def main(user_name, upload_apnea_events=True):
         resp_detector.upload_apnea_events(respiration_events, "respiration_events", user_name, bucket_resp)
 
     # Extract Snoring timestamps
-    snore_events = Helper.get_snoring_event_timestamps(url, token, org, "audio", start="-24h")
+    #snore_events = Helper.get_snoring_event_timestamps(url, token, org, "audio", start="-24h")
+    snore_events = []
 
     # Calculate total sleep time in hours
     start_time = df_resp["time"].min()
@@ -157,7 +164,7 @@ def main(user_name, upload_apnea_events=True):
     )
 
     ahi = ahi_calculator.calculate_ahi(merged_events, total_sleep_time_hours)
-    print(f"Apnea-Hypopnea Index (AHI): {ahi:.2f}")
+    print(f"Apnea-Hypopnea Index (AHI): {ahi:.4f}")
 
     # Upload AHI to InfluxDB
     if upload_apnea_events:

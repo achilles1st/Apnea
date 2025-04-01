@@ -16,6 +16,9 @@ class TimeAxisItem(pg.AxisItem):
         super().__init__(*args, **kwargs)
         self.enableAutoSIPrefix(False)
 
+        self.setPen(pg.mkPen(color='k'))  # Set the color of the axis ticks to black
+        self.setTextPen(pg.mkPen(color='k'))  # Set the color of the axis labels to black
+
     def tickStrings(self, values, scale, spacing):
         # Convert numeric timestamp values to human-readable time strings
         return [datetime.datetime.fromtimestamp(value, datetime.UTC).strftime("%Y-%m-%d %H:%M:%S") for value in values]
@@ -62,16 +65,33 @@ class ApneaViewer(QtWidgets.QMainWindow):
         # Define the unit for the left axis label
         self.unit = "%" if self.field == "spO2" else "bpm"
 
+        # Set the font size for the axis labels and ticks
+        label_style = {'color': 'k', 'font-size': '12pt'}
+        tick_font = QtGui.QFont()
+        tick_font.setPointSize(8)
+
         # Create a custom bottom axis item
         time_axis = TimeAxisItem(orientation='bottom')
+        time_axis.setStyle(tickFont=tick_font)
         self.pr_plot_widget = pg.PlotWidget(axisItems={'bottom': time_axis}, title=f"{self.field} Over Time")
-        self.pr_plot_widget.setLabel('left', f"{self.field}", units=self.unit)
-        self.pr_plot_widget.setLabel('bottom', "Time")
+        self.pr_plot_widget.setLabel('left', f"{self.field}", units=self.unit, **label_style)
+        self.pr_plot_widget.setLabel('bottom', "Time", **label_style)
+        self.pr_plot_widget.setTitle(f"{self.field} Over Time", color='k')
+
+        # Set the color of the y-axis ticks and labels to black
+        left_axis = self.pr_plot_widget.getAxis('left')
+        left_axis.setPen(pg.mkPen(color='k'))
+        left_axis.setTextPen(pg.mkPen(color='k'))
+        left_axis.setStyle(tickFont=tick_font)
 
         # Set background color to white
         self.pr_plot_widget.setBackground('w')
         # Add legend to the plot
-        self.pr_plot_widget.addLegend(offset=(10, 10))
+        self.pr_plot_widget.addLegend(offset=(10, 10), labelTextColor='k')  # Set legend label color to black
+
+        # Set the color of the y-axis ticks and labels to black
+        self.pr_plot_widget.getAxis('left').setPen(pg.mkPen(color='k'))
+        self.pr_plot_widget.getAxis('left').setTextPen(pg.mkPen(color='k'))
 
         # Plot pulse/resp data
         self.curve = self.pr_plot_widget.plot(self.times_in_seconds, self.values, pen='b', name="Data")
@@ -159,7 +179,10 @@ def main():
     token = config['INFLUXDB']['TOKEN']
     org = config['INFLUXDB']['ORG']
 
-    sensor = "ecg"
+    sensor = "respiration"  # Change this to "spO2", "respiration", or "ecg" to view different sensor data
+
+    start_time = '2025-02-19T08:00:30Z'
+    end_time = '2025-02-19T13:24:36Z'
 
     if sensor == "ecg":
         bucket = config['BUCKETS']['ECG_BUCKET']
@@ -181,24 +204,24 @@ def main():
         raise ValueError(f"Invalid sensor: {sensor}")
 
     if sensor_field == "spO2":
-        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=20)
-        df = detector.get_data(bucket, measurement, source='influx')
-        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=10)
+        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=8)
+        df = detector.get_data_between(bucket, measurement, start_time, end_time, source='influx')
+        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=8)
         apnea_events = detector.detect_apnea_events(df_pf_baseline)
         baselines = df_pf_baseline["baseline"].values
         data = df[f"{sensor_field}"].values
         t = df["time"].values  # numpy array of datetime64 objects
     elif sensor_field == "PulseRate":
-        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=20)
-        df = detector.get_data(bucket, measurement, source='influx')
-        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=10)
+        detector = PulseOxiDetector(url, token, org, sensor_field, fs=60, baseline_window_minutes=8)
+        df = detector.get_data_between(bucket, measurement, start_time, end_time, source='influx')
+        df_pf_baseline = detector.compute_rolling_baseline(df, min_periods_minutes=8)
         apnea_events = detector.detect_apnea_events(df_pf_baseline)
         baselines = df_pf_baseline["baseline"].values
         data = df[f"{sensor_field}"].values
         t = df["time"].values  # numpy array of datetime64 objects
     elif sensor_field == "resp_value":
         detector = EnvelopeBasedApneaDetector(url, token, org, sensor_field, fs=10, min_duration=10)
-        df = detector.get_data(bucket, measurement, source='influx')
+        df = detector.get_data_between(bucket, measurement, start_time, end_time, source='influx')
         data = df[f"{sensor_field}"].values
         # Convert the respiration signal to a pandas Series
         respiration_series = pd.Series(data)
@@ -210,7 +233,7 @@ def main():
         baselines = None
     elif sensor_field == "ecg_value":  # ECG Integration
         detector = ECGDetector(url, token, org, sensor_field)
-        df = detector.get_data(bucket, measurement, source='influx')
+        df = detector.get_data_between(bucket, measurement, start_time, end_time, source='influx')
         apnea_events = detector.classify_ecg(df)
         data = df[f"{sensor_field}"].values
         t = df["time"].values
